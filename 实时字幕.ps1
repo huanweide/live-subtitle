@@ -35,6 +35,35 @@ function Dbg([string]$m) {
 
 Dbg "脚本开始，Root=$script:Root  TestMode=$TestMode"
 
+# ============ 高 DPI 适配 ============
+# Windows 在 125% / 150% 缩放下，会把没声明「自己会缩放」的程序整个当图片放大，
+# 字就是拉伸出来的、边缘发虚。这里先声明 DPI 感知，再算出缩放比，
+# 后面窗口的尺寸、位置都乘这个比例 —— 视觉大小和原来一样，但字按物理像素重新渲染，边缘干净。
+Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+public class DpiAware {
+    [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
+    [DllImport("user32.dll")] static extern IntPtr GetDC(IntPtr h);
+    [DllImport("user32.dll")] static extern int ReleaseDC(IntPtr h, IntPtr dc);
+    [DllImport("gdi32.dll")]  static extern int GetDeviceCaps(IntPtr dc, int index);
+    public static int ScreenDpi() {
+        IntPtr dc = GetDC(IntPtr.Zero);
+        int dpi = GetDeviceCaps(dc, 88);
+        ReleaseDC(IntPtr.Zero, dc);
+        return dpi;
+    }
+}
+"@
+$script:Dpi   = 96
+$script:Scale = 1.0
+try {
+    [void][DpiAware]::SetProcessDPIAware()
+    $script:Dpi = [DpiAware]::ScreenDpi()
+    if ($script:Dpi -ge 96) { $script:Scale = [Math]::Round($script:Dpi / 96.0, 3) }
+} catch { }
+Dbg "DPI=$script:Dpi  缩放比例=$script:Scale"
+
 # ============ 语言表 ============
 # 键是 whisper 的 -l 语言代码，值是界面上显示的中文名。加语言就往这里加一行。
 $script:LangNames = [ordered]@{
@@ -231,21 +260,77 @@ public class Win32CS {
     $form.FormBorderStyle = 'None'
     $form.TopMost         = $true
     $form.ShowInTaskbar   = $false
-    $form.BackColor       = [Drawing.ColorTranslator]::FromHtml($cfg.bgColor)
-    $form.Opacity         = [double]$cfg.opacity
+    $form.AutoScaleMode   = 'None'
+
+    # 只让「背景」半透明，文字保持 100% 不透明。
+    # 坑：WinForms 默认禁止控件用带透明度的背景色（直接抛「控件不支持透明的背景色」），
+    # 得先打开 SupportsTransparentBackColor 这个内部开关 —— AllowTransparency 不保证帮你开，
+    # 所以这里用反射调受保护的 SetStyle；真开不了就退回「整窗调透明度」的老办法，不至于打不开。
+    $script:BgColor   = [Drawing.ColorTranslator]::FromHtml($cfg.bgColor)
+    $script:AlphaBgOk = $false
+    try {
+        $form.AllowTransparency = $true
+        $bf = [System.Reflection.BindingFlags]::NonPublic -bor [System.Reflection.BindingFlags]::Instance
+        $mi = [System.Windows.Forms.Control].GetMethod('SetStyle', $bf)
+        $null = $mi.Invoke($form, @([System.Windows.Forms.ControlStyles]::SupportsTransparentBackColor, $true))
+        $script:AlphaBgOk = $true
+    } catch {
+        Dbg "半透明背景不可用，退回整窗透明度: $($_.Exception.Message)"
+        try { $form.AllowTransparency = $false } catch { }
+    }
+
+    function Get-BgArgb {
+        $a = [int][Math]::Round([double]$cfg.opacity * 255)
+        if ($a -lt 40)  { $a = 40 }
+        if ($a -gt 255) { $a = 255 }
+        return [Drawing.Color]::FromArgb($a, $script:BgColor.R, $script:BgColor.G, $script:BgColor.B)
+    }
+    function Apply-Bg {
+        if ($script:AlphaBgOk) {
+            $form.BackColor = Get-BgArgb
+        } else {
+            $form.BackColor = $script:BgColor
+            try { $form.Opacity = [double]$cfg.opacity } catch { }
+        }
+    }
+    Apply-Bg
     $form.StartPosition   = 'Manual'
-    $form.Location        = New-Object Drawing.Point([int]$cfg.left, [int]$cfg.top)
-    $form.Size            = New-Object Drawing.Size([int]$cfg.width, [int]$cfg.height)
-    Dbg "窗体属性设置完成"
+    # 配置里的数字一律按「逻辑像素」存，显示时乘屏幕缩放 —— 换台不同缩放的电脑，字幕条大小位置不变
+    $form.Location        = New-Object Drawing.Point(
+                                [int]([int]$cfg.left   * $script:Scale),
+                                [int]([int]$cfg.top    * $script:Scale))
+    $form.Size            = New-Object Drawing.Size(
+                                [int]([int]$cfg.width  * $script:Scale),
+                                [int]([int]$cfg.height * $script:Scale))
+
+    # 圆角：把一个圆角矩形当窗口的形状掩膜，四个直角被削掉
+    $script:CornerR = [int](18 * $script:Scale)
+    function Set-RoundedRegion {
+        $r = $script:CornerR
+        $w = $form.Width
+        $h = $form.Height
+        $gp = New-Object Drawing.Drawing2D.GraphicsPath
+        $gp.AddArc(0, 0, $r, $r, 180, 90)
+        $gp.AddArc(($w - $r), 0, $r, $r, 270, 90)
+        $gp.AddArc(($w - $r), ($h - $r), $r, $r, 0, 90)
+        $gp.AddArc(0, ($h - $r), $r, $r, 90, 90)
+        $gp.CloseFigure()
+        $form.Region = New-Object Drawing.Region($gp)
+        $gp.Dispose()
+    }
+    Set-RoundedRegion
+    Dbg ("窗体属性设置完成  尺寸=" + $form.Width + "x" + $form.Height + "  位置=" + $form.Location.X + "," + $form.Location.Y)
 
     $lblJa               = New-Object System.Windows.Forms.Label
     $lblJa.Dock          = 'Top'
-    $lblJa.Height        = 56
+    $lblJa.Height        = [int](56 * $script:Scale)
     $lblJa.AutoSize      = $false
     $lblJa.TextAlign     = 'MiddleCenter'
+    $lblJa.Padding       = New-Object System.Windows.Forms.Padding(0, [int](4 * $script:Scale), 0, 0)
     $lblJa.ForeColor     = [Drawing.ColorTranslator]::FromHtml($cfg.jaColor)
     $lblJa.BackColor     = [Drawing.Color]::Transparent
     $lblJa.Font          = New-Object Drawing.Font('微软雅黑', [float]$cfg.fontSizeJa)
+    $lblJa.UseCompatibleTextRendering = $true   # 透明背景上用 GDI+ 渲染，笔画抗锯齿更平滑
     $lblJa.Text          = ''
     $lblJa.Visible       = [bool]$cfg.showJapanese
 
@@ -258,9 +343,13 @@ public class Win32CS {
     $lblZh.Dock          = 'Fill'
     $lblZh.AutoSize      = $false
     $lblZh.TextAlign     = 'MiddleCenter'
+    $lblZh.Padding       = New-Object System.Windows.Forms.Padding(
+                               [int](16 * $script:Scale), [int](6 * $script:Scale),
+                               [int](16 * $script:Scale), [int](10 * $script:Scale))
     $lblZh.ForeColor     = $script:IdleColor
     $lblZh.BackColor     = [Drawing.Color]::Transparent
     $lblZh.Font          = New-Object Drawing.Font('微软雅黑', [float]$cfg.fontSizeZh, [Drawing.FontStyle]::Bold)
+    $lblZh.UseCompatibleTextRendering = $true   # 同上
     $lblZh.Text          = $script:IdleText
 
     $form.Controls.Add($lblZh)
@@ -278,27 +367,79 @@ public class Win32CS {
     Apply-Mode
 
     # 拖动
-    $script:Dragging = $false
-    $script:DragPt   = New-Object Drawing.Point(0, 0)
-    $onDown = {
-        $script:Dragging = $true
-        $script:DragPt   = [System.Windows.Forms.Cursor]::Position
+    # 老实现有个坑：鼠标在字幕条上按下、移到条子外面再松开，MouseUp 收不到，
+    # Dragging 就永远停在 true —— 之后鼠标每次划过字幕条，窗口都跟着跑，还能跑到屏幕外面去。
+    # 现在三重保险：按下时抓住鼠标、每次移动都确认左键还按着、松手和启动时都把位置夹回屏幕内。
+    $script:Dragging  = $false
+    $script:DragMoved = $false
+    $script:DragPt    = New-Object Drawing.Point(0, 0)
+
+    function Save-Pos {
+        # 配置里存逻辑像素，除以屏幕缩放
+        $cfg.left = [int][Math]::Round($form.Location.X / $script:Scale)
+        $cfg.top  = [int][Math]::Round($form.Location.Y / $script:Scale)
+        Save-Cfg
     }
-    $onMove = {
-        if ($script:Dragging) {
-            $p = [System.Windows.Forms.Cursor]::Position
-            $form.Location = New-Object Drawing.Point(
-                ($form.Location.X + $p.X - $script:DragPt.X),
-                ($form.Location.Y + $p.Y - $script:DragPt.Y))
-            $script:DragPt = $p
+    function Clamp-Pos {
+        # 至少留 120×60 逻辑像素在屏幕里，免得拖出去找不回来
+        $vs   = [System.Windows.Forms.SystemInformation]::VirtualScreen
+        $keepX = [int](120 * $script:Scale)
+        $keepY = [int](60  * $script:Scale)
+        $x = $form.Location.X
+        $y = $form.Location.Y
+        if ($x -gt ($vs.Right  - $keepX)) { $x = $vs.Right  - $keepX }
+        if ($x -lt ($vs.Left   - $form.Width + $keepX)) { $x = $vs.Left - $form.Width + $keepX }
+        if ($y -gt ($vs.Bottom - $keepY)) { $y = $vs.Bottom - $keepY }
+        if ($y -lt $vs.Top) { $y = $vs.Top }
+        if ($x -ne $form.Location.X -or $y -ne $form.Location.Y) {
+            $form.Location = New-Object Drawing.Point($x, $y)
+            Dbg "位置超出屏幕，已拉回: $x,$y"
         }
     }
-    $onUp = { $script:Dragging = $false }
+
+    $onDown = {
+        $script:Dragging  = $true
+        $script:DragMoved = $false
+        $script:DragPt    = [System.Windows.Forms.Cursor]::Position
+        try { $form.Capture = $true } catch { }   # 抓住鼠标，条子外面松手也能收到 MouseUp
+    }
+    $onMove = {
+        if (-not $script:Dragging) { return }
+        $down = ([System.Windows.Forms.Control]::MouseButtons -band [System.Windows.Forms.MouseButtons]::Left) -ne 0
+        if (-not $down) {
+            # 左键已经松了（多半是在条子外面松的）→ 立刻收尾，别再跟着鼠标跑
+            $script:Dragging = $false
+            try { $form.Capture = $false } catch { }
+            Clamp-Pos
+            if ($script:DragMoved) { Save-Pos; Dbg ("位置已记住: " + $cfg.left + "," + $cfg.top) }
+            return
+        }
+        $p  = [System.Windows.Forms.Cursor]::Position
+        $dx = $p.X - $script:DragPt.X
+        $dy = $p.Y - $script:DragPt.Y
+        if ($dx -ne 0 -or $dy -ne 0) {
+            $form.Location    = New-Object Drawing.Point(($form.Location.X + $dx), ($form.Location.Y + $dy))
+            $script:DragPt    = $p
+            $script:DragMoved = $true
+        }
+    }
+    $onUp = {
+        try { $form.Capture = $false } catch { }
+        if ($script:Dragging) {
+            $script:Dragging = $false
+            if ($script:DragMoved) {
+                Clamp-Pos
+                Save-Pos
+                Dbg ("位置已记住: " + $cfg.left + "," + $cfg.top)
+            }
+        }
+    }
     foreach ($c in @($form, $lblJa, $lblZh)) {
         $c.Add_MouseDown($onDown)
         $c.Add_MouseMove($onMove)
         $c.Add_MouseUp($onUp)
     }
+    Clamp-Pos   # 上次要是被拖到屏幕外了，启动就拉回来
 
     # 滚轮调字号
     $onWheel = {
@@ -520,15 +661,43 @@ public class Win32CS {
         $btnOk.Location = New-Object Drawing.Point(120, $ly); $btnOk.Size = New-Object Drawing.Size(140, 34)
         $dlg.Controls.Add($btnOk)
         $btnClose = New-Object System.Windows.Forms.Button
-        $btnClose.Text = '关闭'
-        $btnClose.Location = New-Object Drawing.Point(290, $ly); $btnClose.Size = New-Object Drawing.Size(110, 34)
+        $btnClose.Text = '关闭（不保存）'
+        $btnClose.Location = New-Object Drawing.Point(285, $ly); $btnClose.Size = New-Object Drawing.Size(130, 34)
         $dlg.Controls.Add($btnClose)
 
         $tip = New-Object System.Windows.Forms.Label
-        $tip.Text = '改完点「应用并保存」，立刻生效。字幕条可以按住拖动。'
+        $tip.Text = '调字号 / 不透明度 / 显示模式，字幕条立刻就变。「应用并保存」才算数；点「关闭（不保存）」全部退回原样。'
         $tip.Location = New-Object Drawing.Point(20, ($ly+50)); $tip.Size = New-Object Drawing.Size(470, 24)
         $tip.ForeColor = [Drawing.Color]::Gray
         $dlg.Controls.Add($tip)
+
+        # ---------- 实时预览 ----------
+        # 以前改字号得先点保存、再看黑条、不满意再打开设置，来回好几趟。
+        # 现在一边调一边就能看见效果。代价是「关闭」得负责把预览退回去，所以先记一份原始值。
+        $snapZh      = [int]$cfg.fontSizeZh
+        $snapJa      = [int]$cfg.fontSizeJa
+        $snapOpacity = [double]$cfg.opacity
+        $snapMode    = "$($cfg.mode)"
+        $snapShowJa  = [bool]$cfg.showJapanese
+
+        $n1.Add_ValueChanged({
+            $lblZh.Font = New-Object Drawing.Font('微软雅黑', [float]$n1.Value, [Drawing.FontStyle]::Bold)
+        })
+        $n2.Add_ValueChanged({
+            $lblJa.Font = New-Object Drawing.Font('微软雅黑', [float]$n2.Value)
+        })
+        $n4.Add_ValueChanged({
+            $cfg.opacity = [double]$n4.Value
+            Apply-Bg
+        })
+        foreach ($rb in @($r1, $r2, $r3)) {
+            $rb.Add_CheckedChanged({
+                if     ($r2.Checked) { $cfg.mode = 'zhOnly' }
+                elseif ($r3.Checked) { $cfg.mode = 'jaOnly' }
+                else                 { $cfg.mode = 'both'; $cfg.showJapanese = $true }
+                Apply-Mode
+            })
+        }
 
         $btnOk.Add_Click({
             $cfg.fontSizeZh  = [int]$n1.Value
@@ -539,7 +708,7 @@ public class Win32CS {
             elseif ($r3.Checked) { $cfg.mode = 'jaOnly' }
             else { $cfg.mode = 'both'; $cfg.showJapanese = $true }
             Set-ClickThrough ([bool]$ck1.Checked)
-            $form.Opacity = [double]$cfg.opacity
+            Apply-Bg
             $lblZh.Font = New-Object Drawing.Font('微软雅黑', [float]$cfg.fontSizeZh, [Drawing.FontStyle]::Bold)
             $lblJa.Font = New-Object Drawing.Font('微软雅黑', [float]$cfg.fontSizeJa)
             Apply-Mode
@@ -571,7 +740,18 @@ public class Win32CS {
             Dbg "设置窗口：已应用并保存"
             $dlg.Close()
         })
-        $btnClose.Add_Click({ $dlg.Close() })
+        $btnClose.Add_Click({
+            # 不保存 = 把刚才预览出来的样子全部退回去
+            $lblZh.Font = New-Object Drawing.Font('微软雅黑', [float]$snapZh, [Drawing.FontStyle]::Bold)
+            $lblJa.Font = New-Object Drawing.Font('微软雅黑', [float]$snapJa)
+            $cfg.opacity      = $snapOpacity
+            $cfg.mode         = $snapMode
+            $cfg.showJapanese = $snapShowJa
+            Apply-Bg
+            Apply-Mode
+            Dbg "设置窗口：关闭，未保存（已退回原样）"
+            $dlg.Close()
+        })
 
         [void]$dlg.ShowDialog($form)
     }
