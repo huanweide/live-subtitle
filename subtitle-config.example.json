@@ -1,0 +1,33 @@
+{
+    "_说明": "这是配置示例。真正的配置文件名是 subtitle-config.json（会被 .gitignore 忽略，不会上传）。第一次运行时程序会自动生成一份。",
+
+    "_翻译接口说明": "下面两项决定日文翻成中文用哪个服务。默认用硅基流动（注册送额度，够个人用）。",
+    "apiUrl": "https://api.siliconflow.cn/v1/chat/completions",
+    "translateModel": "Qwen/Qwen2.5-7B-Instruct",
+
+    "_密钥说明": "把密钥填在 apiKey 里。也可以留空，程序会去读环境变量 SILICONFLOW_API_KEY。密钥只会存在你自己电脑上。",
+    "apiKey": "",
+
+    "_录音设备说明": "录音设备编号。留 -1 表示交给系统默认；想知道自己机器上哪个编号是「立体声混音」，看 debug.log 开头的设备清单，或者双击字幕条在设置窗口里直接选。选错了不会报错，只是字幕一直不出字。",
+    "captureDevice": -1,
+    "sourceLang": "ja",
+
+    "_模型与引擎说明": "下面两项由 setup.ps1 自动探测写入，一般不用手改。手动安装的话，填上模型文件和 whisper-stream.exe 的完整路径。",
+    "modelPath": "",
+    "whisperStream": "",
+
+    "fontSizeZh": 32,
+    "fontSizeJa": 18,
+    "zhColor": "#FFFFFF",
+    "jaColor": "#9AD0FF",
+    "bgColor": "#101010",
+    "opacity": 0.72,
+    "left": 200,
+    "top": 800,
+    "width": 1500,
+    "height": 190,
+    "showJapanese": true,
+    "holdSeconds": 10,
+    "mode": "both",
+    "clickThrough": false
+}

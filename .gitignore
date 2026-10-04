@@ -1,0 +1,117 @@
+# ===== 大文件：绝不进仓库 =====
+# 模型（1.5 GB 级）
+models/
+*.bin
+*.gguf
+
+# whisper.cpp 主程序（GPU 版 1.1 GB）
+whispercpp/
+whispercpp-gpu/
+*.zip
+
+# Vibe（本项目的模型来源，不是本项目的一部分）
+vibe_3.2.2_x64-setup.exe
+vibe*.png
+
+# ===== 运行产物 =====
+*.log
+ws-live.txt
+ws-std*
+debug.log
+script-out.log
+script-err.log
+wt-out.log
+wt-err.log
+
+# ===== 私人配置（含密钥，绝不外传）=====
+subtitle-config.json
+.siliconflow.key
+.env
+
+# ===== 临时文件 =====
+*~
+Thumbs.db
+desktop.ini
+
+# ===== 通用凭据：永久禁止入 Git =====
+# 本项目现在用不到这些，加在这里是防以后：哪天往目录里放了密钥文件，
+# 不至于被 git add . 一起卷进仓库。
+.env.*
+!.env.example
+!.env.template
+
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.cer
+*.der
+*.priv
+id_rsa
+id_ecdsa
+id_ed25519
+id_dsa
+.ssh/
+*.pub
+
+.aws/
+.azure/
+.gcp/
+.gcloud/
+.kube/
+.k8s/
+kubeconfig*
+
+credentials.json
+credentials.yaml
+credentials.yml
+service-account*.json
+auth.json
+tokens.json
+token.json
+secrets.json
+secret*.json
+*.secret
+*.token
+*.session
+cookies.json
+*.cookies
+
+.npmrc
+.pypirc
+.pip.conf
+pip.conf
+.netrc
+.git-credentials
+.github-token
+.gho
+
+.dsh/
+.workbuddy/
+.loop-state.json
+
+# ===== 调试残留 =====
+_probe/
+_p*.txt
+_p*.err
+_st_*.txt
+_st_*.err
+_selftest_*
+*-test.txt
+*-test.out
+*-test.err
+cli-test.txt
+ws-file-test.txt
+stream-probe.*
+ws-probe.*
+ws2.*
+
+# ===== 备份文件 =====
+*.bak
+*.bak-*
+*.bak-before-*
+
+# ===== 内部工作文档（写给自己看的，不上传）=====
+*-怎么做.md
+项目说明.md
