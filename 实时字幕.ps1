@@ -548,7 +548,7 @@ public class Win32CS {
     function Show-Settings {
         $dlg = New-Object System.Windows.Forms.Form
         $dlg.Text            = '实时字幕 · 设置'
-        $dlg.ClientSize      = New-Object Drawing.Size(520, 524)
+        $dlg.ClientSize      = New-Object Drawing.Size(520, 430)
         $dlg.StartPosition   = 'CenterScreen'
         $dlg.TopMost         = $true
         $dlg.FormBorderStyle = 'FixedDialog'
@@ -616,6 +616,28 @@ public class Win32CS {
         $dlg.Controls.Add($n2)
         $ly += 46
 
+        # 字幕条整体宽高：字调大了条子也得跟着长，不然字被切掉
+        $lb6 = New-Object System.Windows.Forms.Label
+        $lb6.Text = '字幕条宽高'; $lb6.Location = New-Object Drawing.Point(20, ($ly+5)); $lb6.Size = New-Object Drawing.Size(90,24)
+        $dlg.Controls.Add($lb6)
+        $n5 = New-Object System.Windows.Forms.NumericUpDown
+        $n5.Minimum = 600; $n5.Maximum = 3840; $n5.Increment = 50; $n5.Value = [int]$cfg.width
+        $n5.Location = New-Object Drawing.Point(120, $ly); $n5.Size = New-Object Drawing.Size(90,28)
+        $dlg.Controls.Add($n5)
+        $lb6b = New-Object System.Windows.Forms.Label
+        $lb6b.Text = '×'; $lb6b.Location = New-Object Drawing.Point(216, ($ly+4)); $lb6b.Size = New-Object Drawing.Size(18,24)
+        $dlg.Controls.Add($lb6b)
+        $n6 = New-Object System.Windows.Forms.NumericUpDown
+        $n6.Minimum = 100; $n6.Maximum = 800; $n6.Increment = 10; $n6.Value = [int]$cfg.height
+        $n6.Location = New-Object Drawing.Point(240, $ly); $n6.Size = New-Object Drawing.Size(90,28)
+        $dlg.Controls.Add($n6)
+        $lb6c = New-Object System.Windows.Forms.Label
+        $lb6c.Text = '（逻辑像素）'
+        $lb6c.Location = New-Object Drawing.Point(340, ($ly+5)); $lb6c.Size = New-Object Drawing.Size(120,24)
+        $lb6c.ForeColor = [Drawing.Color]::Gray
+        $dlg.Controls.Add($lb6c)
+        $ly += 46
+
         $lb3 = New-Object System.Windows.Forms.Label
         $lb3.Text = '停留秒数'; $lb3.Location = New-Object Drawing.Point(20, ($ly+5)); $lb3.Size = New-Object Drawing.Size(90,24)
         $dlg.Controls.Add($lb3)
@@ -679,6 +701,8 @@ public class Win32CS {
         $snapOpacity = [double]$cfg.opacity
         $snapMode    = "$($cfg.mode)"
         $snapShowJa  = [bool]$cfg.showJapanese
+        $snapW       = [int]$cfg.width
+        $snapH       = [int]$cfg.height
 
         $n1.Add_ValueChanged({
             $lblZh.Font = New-Object Drawing.Font('微软雅黑', [float]$n1.Value, [Drawing.FontStyle]::Bold)
@@ -698,11 +722,25 @@ public class Win32CS {
                 Apply-Mode
             })
         }
+        $n5.Add_ValueChanged({
+            try {
+                $form.Size = New-Object Drawing.Size([int]($n5.Value * $script:Scale), $form.Height)
+                Set-RoundedRegion
+            } catch { }
+        })
+        $n6.Add_ValueChanged({
+            try {
+                $form.Size = New-Object Drawing.Size($form.Width, [int]($n6.Value * $script:Scale))
+                Set-RoundedRegion
+            } catch { }
+        })
 
         $btnOk.Add_Click({
             $cfg.fontSizeZh  = [int]$n1.Value
             $cfg.fontSizeJa  = [int]$n2.Value
             $cfg.holdSeconds = [int]$n3.Value
+            $cfg.width       = [int]$n5.Value
+            $cfg.height      = [int]$n6.Value
             $cfg.opacity     = [double]$n4.Value
             if ($r2.Checked) { $cfg.mode = 'zhOnly' }
             elseif ($r3.Checked) { $cfg.mode = 'jaOnly' }
@@ -712,6 +750,13 @@ public class Win32CS {
             $lblZh.Font = New-Object Drawing.Font('微软雅黑', [float]$cfg.fontSizeZh, [Drawing.FontStyle]::Bold)
             $lblJa.Font = New-Object Drawing.Font('微软雅黑', [float]$cfg.fontSizeJa)
             Apply-Mode
+
+            # 宽高改了：把字幕条重摆一次（配置存逻辑像素，乘上屏幕缩放）
+            try {
+                $form.Size = New-Object Drawing.Size([int]($cfg.width * $script:Scale), [int]($cfg.height * $script:Scale))
+                Set-RoundedRegion
+                Clamp-Pos
+            } catch { Dbg "应用尺寸失败: $($_.Exception.Message)" }
 
             # 语言变了 / 录音设备变了：清屏 + 重开识别进程（只重开一次）
             $newLang = ("$($cbLang.SelectedItem)" -split '\|')[-1]
@@ -747,11 +792,44 @@ public class Win32CS {
             $cfg.opacity      = $snapOpacity
             $cfg.mode         = $snapMode
             $cfg.showJapanese = $snapShowJa
+            $cfg.width        = $snapW
+            $cfg.height       = $snapH
+            try {
+                $form.Size = New-Object Drawing.Size([int]($snapW * $script:Scale), [int]($snapH * $script:Scale))
+                Set-RoundedRegion
+                Clamp-Pos
+            } catch { }
             Apply-Bg
             Apply-Mode
             Dbg "设置窗口：关闭，未保存（已退回原样）"
             $dlg.Close()
         })
+
+        # ---------- 高 DPI：把整个设置窗口按屏幕缩放放大一遍 ----------
+        # 主字幕条从一开始就乘了 Scale，设置窗口没有。150% 缩放的屏幕上，
+        # 字是点单位会自己变大、框还是老尺寸 —— 于是字挤在框里、行距发紧。
+        # 显示前统一乘一遍，最省事也最不容易漏。
+        if ($script:Scale -ne 1.0) {
+            $dlg.ClientSize = New-Object Drawing.Size([int](520 * $script:Scale), [int](430 * $script:Scale))
+            foreach ($c in @($dlg.Controls)) {
+                $c.Location = New-Object Drawing.Point([int]($c.Location.X * $script:Scale), [int]($c.Location.Y * $script:Scale))
+                $c.Size     = New-Object Drawing.Size([int]($c.Size.Width * $script:Scale), [int]($c.Size.Height * $script:Scale))
+            }
+            Dbg ("设置窗口已按 " + $script:Scale + " 倍放大，尺寸=" + $dlg.Width + "x" + $dlg.Height)
+        }
+        # 居中显示，但要保证整扇窗落在屏幕里（CenterScreen 在多屏 / 缩放环境算歪过）
+        $dlg.StartPosition = 'Manual'
+        try {
+            $vs2 = [System.Windows.Forms.SystemInformation]::VirtualScreen
+            $wx  = $dlg.Width; $wy = $dlg.Height
+            $px  = [int]($vs2.Left + [Math]::Max(0, ($vs2.Width  - $wx) / 2))
+            $py  = [int]($vs2.Top  + [Math]::Max(0, ($vs2.Height - $wy) / 2))
+            if (($px + $wx) -gt $vs2.Right)  { $px = $vs2.Right  - $wx }
+            if (($py + $wy) -gt $vs2.Bottom) { $py = $vs2.Bottom - $wy }
+            if ($px -lt $vs2.Left) { $px = $vs2.Left }
+            if ($py -lt $vs2.Top)  { $py = $vs2.Top }
+            $dlg.Location = New-Object Drawing.Point($px, $py)
+        } catch { Dbg "设置窗口定位失败: $($_.Exception.Message)" }
 
         [void]$dlg.ShowDialog($form)
     }
@@ -873,6 +951,16 @@ public class HKFilter : IMessageFilter {
     $form.Add_Shown({
         if ([bool]$cfg.clickThrough) { Set-ClickThrough $true }
         Dbg "穿透已应用: $($cfg.clickThrough)"
+        if ($TestMode) {
+            $script:ShotTimer = New-Object Windows.Forms.Timer
+            $script:ShotTimer.Interval = 4000
+            $script:ShotTimer.Add_Tick({
+                $script:ShotTimer.Stop()
+                Dbg "截图模式：自动打开设置窗口"
+                try { Show-Settings } catch { Dbg "截图模式打开设置失败: $($_.Exception.Message)" }
+            })
+            $script:ShotTimer.Start()
+        }
     })
 
     # 退出时收拾干净

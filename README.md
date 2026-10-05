@@ -1,14 +1,23 @@
 # 实时中文字幕 · 本地识别（Windows）
 
+![平台](https://img.shields.io/badge/platform-Windows%2010%20%2F%2011-0078D6?logo=windows&logoColor=white)
+![PowerShell](https://img.shields.io/badge/PowerShell-5.1%2B-5391FE?logo=powershell&logoColor=white)
+![不用装 Python](https://img.shields.io/badge/Python-%E4%B8%8D%E7%94%A8%E8%A3%85-brightgreen?logo=python&logoColor=white)
+![识别本地跑](https://img.shields.io/badge/%E8%AF%AD%E9%9F%B3%E8%AF%86%E5%88%AB-100%25%20%E6%9C%AC%E5%9C%B0-blue)
+![许可](https://img.shields.io/badge/license-MIT-green)
+
 > 电脑在响，屏幕底部就实时浮出中文字幕——中文在上，原文在下。
 > **不挑播放器、不挑网站**——只要电脑在出声，就能翻。
 > **声音不出这台电脑**——识别全程在本地显卡上跑。
+> **字幕浮在所有窗口最上层**——拖到哪都行，看片时还能点穿。
+
+![字幕条](docs/screenshot-bar.png)
 
 <!--
-  放演示图的地方。建议录一个 10 秒的 GIF：
+  想放动态演示，录一个 10 秒的 GIF：
   - 工具：ScreenToGif（免费）或 ShareX
-  - 录的时候把字幕条、影片画面一起录进去
-  - 存成 docs/demo.gif，然后把下面这行取消注释
+  - 录的时候把字幕条和影片画面一起录进去
+  - 存成 docs/demo.gif，把下面这行取消注释
 
 ![演示](docs/demo.gif)
 -->
@@ -69,6 +78,25 @@
 - 支持显示模式：**原文 + 中文双语** / 只看中文 / 只看原文
 - 字幕条可以**拖动**、可以调**字号 / 颜色 / 透明度 / 停留时间**
 - 看片时一键开「**点击穿透**」，字幕条就不会挡住播放器的按钮
+
+---
+
+## 翻译用的是谁
+
+识别在你自己电脑上跑，**翻译这一步要调一个大模型接口**，所以得有个 API 密钥。
+
+默认用[**硅基流动**](https://cloud.siliconflow.cn/i/axOmWfWi)。挑它的理由：
+
+- **中文译得好**——它自家的 Qwen 系列本来就是中文模型，日译中比拿英文模型硬转顺得多
+- **注册就送额度**——够你把这个工具试透
+- **按量便宜**——一小时的影片译下来通常几分钱
+- **接口通用**——兼容 OpenAI 格式，哪天想换别家，配置里改两行就行
+
+从[这个链接](https://cloud.siliconflow.cn/i/axOmWfWi)注册（邀请码 `axOmWfWi`），
+你那边是正常的新用户赠送额度，我这边会多一张 16 元的券——算是对这个开源项目的一点支持。
+
+不感兴趣也完全没问题：`subtitle-config.json` 里的 `apiUrl` 和 `translateModel`
+换成任何 OpenAI 兼容的接口，一样能跑。
 
 ---
 
@@ -245,6 +273,9 @@ powershell -ExecutionPolicy Bypass -File .\setup.ps1
 - [x] `setup.ps1` 一键安装
 - [x] 录音设备自动识别 + 图形化选择
 - [x] 支持更多源语言（日语、英语、韩语、俄语、法语、德语、西班牙语、意大利语、自动检测）
+- [x] 界面：圆角、真不透明文字、高 DPI 适配、拖动记忆位置、设置窗口实时预览
+- [ ] 字幕条整体缩放（设置里调宽高 / 滚轮直接缩放）
+- [ ] 桌面图标改成开关键（点一下开、再点一下关，图标跟着变色）
 - [ ] 翻译接口可切换（硅基流动 / OpenAI / 本地 Ollama）
 - [ ] 完全离线模式（本地翻译模型）
 - [ ] 字幕条样式主题
@@ -259,6 +290,6 @@ MIT License —— 随便用、随便改，出事别找我。
 
 - [whisper.cpp](https://github.com/ggml-org/whisper.cpp)（MIT）
 - [Whisper](https://github.com/openai/whisper) 模型（MIT）
-- 翻译接口：用户自备密钥
+- 翻译接口：默认[硅基流动](https://cloud.siliconflow.cn/i/axOmWfWi)，密钥自备
 
 **本项目不含任何影片内容，也不提供影片下载。**
