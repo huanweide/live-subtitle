@@ -532,6 +532,10 @@ public class Win32CS {
     })
 
     $null = $menu.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator))
+    $miPause = $menu.Items.Add('暂停字幕')
+    $miPause.Add_Click({ Set-Running (-not $script:Running) })
+
+    $null = $menu.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator))
     $null = $menu.Items.Add('保存当前设置', $null, { Save-Cfg })
     $null = $menu.Items.Add('退出', $null, { $form.Close() })
 
@@ -547,14 +551,76 @@ public class Win32CS {
         }
         $nxt = if ([int]$cfg.holdSeconds -ge 20) { 10 } else { 20 }
         $miHold.Text = "字幕停留时间：$($cfg.holdSeconds) 秒（点这里改成 $nxt 秒）"
+        $miPause.Text = if ($script:Running) { '暂停字幕' } else { '继续字幕' }
     })
     Dbg "托盘菜单完成"
 
+    # ---------- 5c-2. 托盘图标：左键当开关键用 ----------
+    # 以前图标是 Windows 的默认图标，点它没反应，只能右键。
+    # 现在左键点一下 = 暂停/继续，图标跟着变色（绿=在跑、灰=暂停）。
+    # 图标不用外部 .ico 文件，现场用 GDI+ 画一个圆点 —— 仓库里少一个二进制文件。
+    Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public class Win32Icon {
+    [DllImport("user32.dll", SetLastError=true)]
+    public static extern bool DestroyIcon(IntPtr hIcon);
+}
+'@
+    function New-DotIcon([System.Drawing.Color]$color) {
+        $bmp = New-Object Drawing.Bitmap 16, 16
+        $g   = [Drawing.Graphics]::FromImage($bmp)
+        $g.SmoothingMode = [Drawing.Drawing2D.SmoothingMode]::AntiAlias
+        $g.Clear([Drawing.Color]::Transparent)
+        $br = New-Object Drawing.SolidBrush $color
+        $g.FillEllipse($br, 2, 2, 12, 12)
+        $br.Dispose(); $g.Dispose()
+        $h = $bmp.GetHicon()
+        # 必须 Clone 一份：FromHandle 借的是位图的句柄，位图一销毁图标就废了
+        $ico = [System.Drawing.Icon]([System.Drawing.Icon]::FromHandle($h).Clone())
+        [void][Win32Icon]::DestroyIcon($h)
+        $bmp.Dispose()
+        return $ico
+    }
+    $script:IconOn  = New-DotIcon ([Drawing.Color]::FromArgb(64, 200, 96))    # 绿：在跑
+    $script:IconOff = New-DotIcon ([Drawing.Color]::FromArgb(132, 132, 132))  # 灰：暂停
+    $script:Running = $true
+
+    function Set-Running([bool]$on) {
+        try {
+            if ($on) {
+                if (-not $TestMode) { Start-Whisper }
+                $timer.Start()
+                $tray.Icon = $script:IconOn
+                $tray.Text = '实时字幕：开着（左键暂停 / 右键设置）'
+                $lblJa.Text = ''
+                $lblZh.ForeColor = $script:IdleColor
+                $lblZh.Text = $script:IdleText
+                Dbg "字幕已开启"
+            } else {
+                if ($script:Ws -and -not $script:Ws.HasExited) { try { $script:Ws.Kill() } catch { } }
+                $script:Ws = $null
+                $timer.Stop()
+                $tray.Icon = $script:IconOff
+                $tray.Text = '实时字幕：已暂停（左键继续 / 右键设置）'
+                $lblJa.Text = ''
+                $lblZh.ForeColor = $script:IdleColor
+                $lblZh.Text = '● 字幕已暂停 · 左键点托盘小图标继续'
+                Dbg "字幕已暂停"
+            }
+            $script:Running = $on
+        } catch { Dbg "开关失败: $($_.Exception.Message)" }
+    }
+
     $tray           = New-Object System.Windows.Forms.NotifyIcon
-    $tray.Icon      = [System.Drawing.SystemIcons]::Application
-    $tray.Text      = '实时字幕（右键设置）'
+    $tray.Icon      = $script:IconOn
+    $tray.Text      = '实时字幕：开着（左键暂停 / 右键设置）'
     $tray.ContextMenuStrip = $menu
     $tray.Visible   = $true
+    $tray.Add_MouseClick({
+        param($sender, $e)
+        if ($e.Button -eq [System.Windows.Forms.MouseButtons]::Left) { Set-Running (-not $script:Running) }
+    })
     Dbg "托盘图标已显示"
     # Windows 11 默认把新图标折进「隐藏的图标」里，弹个气泡告诉他去哪找
     try {
