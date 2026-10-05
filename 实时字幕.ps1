@@ -78,6 +78,17 @@ $script:LangNames = [ordered]@{
     'auto' = '自动检测'
 }
 
+# ============ 外观主题 ============
+# 设置窗口里那个「外观主题」下拉框用这几套。要加主题就往这里加一行。
+# 只改配色和透明度，不动字号和大小 —— 字号管「看不看得清」，配色管「看着舒不舒服」，两件事分开。
+$script:Themes = [ordered]@{
+    'classic'  = @{ name = '经典黑';     bg = '#101010'; zh = '#FFFFFF'; ja = '#9AD0FF'; op = 0.72 }
+    'contrast' = @{ name = '纯黑高对比'; bg = '#000000'; zh = '#FFFFFF'; ja = '#D8D8D8'; op = 0.95 }
+    'cinema'   = @{ name = '深蓝影院';   bg = '#0B1A2B'; zh = '#F5F0E6'; ja = '#8FB8DE'; op = 0.80 }
+    'night'    = @{ name = '极淡夜航';   bg = '#000000'; zh = '#FFFFFF'; ja = '#BFD8F0'; op = 0.28 }
+}
+$script:ThemeKeys = @('classic', 'contrast', 'cinema', 'night')
+
 # ============ 幻觉黑名单 ============
 # whisper 对「静音」会自己编句子，最常见的编造内容就是视频片尾语。
 # 命中这些，一律不显示。列表按语言分组，加语言时往对应组里补。
@@ -649,7 +660,7 @@ public class Win32Icon {
     function Show-Settings {
         $dlg = New-Object System.Windows.Forms.Form
         $dlg.Text            = '实时字幕 · 设置'
-        $dlg.ClientSize      = New-Object Drawing.Size(520, 430)
+        $dlg.ClientSize      = New-Object Drawing.Size(520, 476)
         $dlg.StartPosition   = 'CenterScreen'
         $dlg.TopMost         = $true
         $dlg.FormBorderStyle = 'FixedDialog'
@@ -772,6 +783,34 @@ public class Win32Icon {
         foreach ($r in @($r1,$r2,$r3)) { $dlg.Controls.Add($r) }
         $ly += 46
 
+        # 外观主题：一键换配色（只动颜色和透明度，字号、大小都不碰）
+        $lbTheme = New-Object System.Windows.Forms.Label
+        $lbTheme.Text = '外观主题'; $lbTheme.Location = New-Object Drawing.Point(20, ($ly+5)); $lbTheme.Size = New-Object Drawing.Size(90,24)
+        $dlg.Controls.Add($lbTheme)
+        $cbTheme = New-Object System.Windows.Forms.ComboBox
+        $cbTheme.DropDownStyle = 'DropDownList'
+        $cbTheme.Location = New-Object Drawing.Point(120, $ly); $cbTheme.Size = New-Object Drawing.Size(150,28)
+        $allThemeKeys = @($script:ThemeKeys) + @('custom')
+        foreach ($tk in @($script:ThemeKeys)) { [void]$cbTheme.Items.Add("$($script:Themes[$tk].name)|$tk") }
+        [void]$cbTheme.Items.Add('自定义（你手动调的那套）|custom')
+        # 当前配色跟哪套预设完全一样就选哪套，都对不上就选「自定义」
+        $curTheme = 'custom'
+        foreach ($tk in @($script:ThemeKeys)) {
+            $tt = $script:Themes[$tk]
+            if ("$($cfg.bgColor)" -eq "$($tt.bg)" -and "$($cfg.zhColor)" -eq "$($tt.zh)" -and
+                "$($cfg.jaColor)" -eq "$($tt.ja)" -and
+                [Math]::Abs([double]$cfg.opacity - [double]$tt.op) -lt 0.005) { $curTheme = $tk; break }
+        }
+        $cbTheme.SelectedIndex = [array]::IndexOf($allThemeKeys, $curTheme)
+        if ($cbTheme.SelectedIndex -lt 0) { $cbTheme.SelectedIndex = 0 }
+        $dlg.Controls.Add($cbTheme)
+        $lbThemeTip = New-Object System.Windows.Forms.Label
+        $lbThemeTip.Text = '（选完立刻变）'
+        $lbThemeTip.Location = New-Object Drawing.Point(280, ($ly+5)); $lbThemeTip.Size = New-Object Drawing.Size(230,24)
+        $lbThemeTip.ForeColor = [Drawing.Color]::Gray
+        $dlg.Controls.Add($lbThemeTip)
+        $ly += 46
+
         $ck1 = New-Object System.Windows.Forms.CheckBox
         $ck1.Text = '鼠标点不到字幕条（看片时开；开了它就拖不动）'
         $ck1.Location = New-Object Drawing.Point(20, $ly); $ck1.Size = New-Object Drawing.Size(470,26)
@@ -804,6 +843,9 @@ public class Win32Icon {
         $snapShowJa  = [bool]$cfg.showJapanese
         $snapW       = [int]$cfg.width
         $snapH       = [int]$cfg.height
+        $snapBg      = "$($cfg.bgColor)"
+        $snapZhC     = "$($cfg.zhColor)"
+        $snapJaC     = "$($cfg.jaColor)"
 
         $n1.Add_ValueChanged({
             $lblZh.Font = New-Object Drawing.Font('微软雅黑', [float]$n1.Value, [Drawing.FontStyle]::Bold)
@@ -834,6 +876,23 @@ public class Win32Icon {
                 $form.Size = New-Object Drawing.Size($form.Width, [int]($n6.Value * $script:Scale))
                 Set-RoundedRegion
             } catch { }
+        })
+        # 外观主题：选完立刻换色。字号和条子大小都不动 —— 那两样归别的控件管。
+        $cbTheme.Add_SelectedIndexChanged({
+            $tk = ("$($cbTheme.SelectedItem)" -split '\|')[-1]
+            if ($tk -eq 'custom' -or -not $script:Themes.Contains($tk)) { return }
+            $tt = $script:Themes[$tk]
+            $cfg.bgColor = "$($tt.bg)"
+            $cfg.zhColor = "$($tt.zh)"
+            $cfg.jaColor = "$($tt.ja)"
+            $cfg.opacity = [double]$tt.op
+            $script:BgColor   = [Drawing.ColorTranslator]::FromHtml("$($tt.bg)")
+            $script:LiveColor = [Drawing.ColorTranslator]::FromHtml("$($tt.zh)")
+            $lblJa.ForeColor  = [Drawing.ColorTranslator]::FromHtml("$($tt.ja)")
+            if ($lblZh.Text -ne $script:IdleText) { $lblZh.ForeColor = $script:LiveColor }
+            try { $n4.Value = [decimal]$tt.op } catch { }
+            Apply-Bg
+            Dbg "主题预览: $($tt.name)"
         })
 
         $btnOk.Add_Click({
@@ -895,6 +954,14 @@ public class Win32Icon {
             $cfg.showJapanese = $snapShowJa
             $cfg.width        = $snapW
             $cfg.height       = $snapH
+            # 主题预览出来的颜色也要退回去（透明度那行上面已经退过了）
+            $cfg.bgColor = $snapBg
+            $cfg.zhColor = $snapZhC
+            $cfg.jaColor = $snapJaC
+            $script:BgColor   = [Drawing.ColorTranslator]::FromHtml($snapBg)
+            $script:LiveColor = [Drawing.ColorTranslator]::FromHtml($snapZhC)
+            $lblJa.ForeColor  = [Drawing.ColorTranslator]::FromHtml($snapJaC)
+            if ($lblZh.Text -ne $script:IdleText) { $lblZh.ForeColor = $script:LiveColor }
             try {
                 $form.Size = New-Object Drawing.Size([int]($snapW * $script:Scale), [int]($snapH * $script:Scale))
                 Set-RoundedRegion
@@ -911,7 +978,7 @@ public class Win32Icon {
         # 字是点单位会自己变大、框还是老尺寸 —— 于是字挤在框里、行距发紧。
         # 显示前统一乘一遍，最省事也最不容易漏。
         if ($script:Scale -ne 1.0) {
-            $dlg.ClientSize = New-Object Drawing.Size([int](520 * $script:Scale), [int](430 * $script:Scale))
+            $dlg.ClientSize = New-Object Drawing.Size([int](520 * $script:Scale), [int](476 * $script:Scale))
             foreach ($c in @($dlg.Controls)) {
                 $c.Location = New-Object Drawing.Point([int]($c.Location.X * $script:Scale), [int]($c.Location.Y * $script:Scale))
                 $c.Size     = New-Object Drawing.Size([int]($c.Size.Width * $script:Scale), [int]($c.Size.Height * $script:Scale))
