@@ -210,6 +210,7 @@ public class Win32CS {
         apiUrl         = "$ApiUrl"         # 翻译接口地址；换别家模型服务时改这里（设置窗口里也能改）
         translateModel = "$TranslateModel" # 翻译用的模型名
         apiKeyEnv      = 'SILICONFLOW_API_KEY'  # 从哪个环境变量取密钥。★ 这里只存变量名，不存密钥本身
+        hotkeyEnabled  = $true   # 全局热键 Ctrl+Alt+Z 开关。嫌组合键难记就在设置里关掉，其它功能不受影响
     }
     if (Test-Path $script:CfgPath) {
         $saved = Get-Content $script:CfgPath -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -439,7 +440,69 @@ public class Win32CS {
 
     $form.Controls.Add($lblZh)
     $form.Controls.Add($lblJa)
-    Dbg "标签创建完成"
+
+    # ---------- 4b. 看得见的把手：不用记任何快捷键 ----------
+    # 为什么加这个：滚轮 / Ctrl+滚 这类手势要求用户先「知道」、再「记住」，
+    # 记不住就等于没有。改成看得见的控件后，鼠标扫过去它就亮起来，
+    # 等于它自己告诉用户「我能拖」——这叫可发现性。
+    $script:GripSize   = [int](22 * $script:Scale)
+    $script:GripActive = $false      # 拖拽中：别让 MouseLeave 把它藏起来
+
+    $grip               = New-Object System.Windows.Forms.Label
+    $grip.Text          = [string][char]0x25E2   # ◢ 右下角三角：一眼看出"拖这里"
+    $grip.AutoSize      = $false
+    $grip.Size          = New-Object Drawing.Size($script:GripSize, $script:GripSize)
+    $grip.TextAlign     = 'MiddleCenter'
+    $grip.Font          = New-Object Drawing.Font('微软雅黑', [float][Math]::Max(8, 9 * $script:Scale))
+    $grip.BackColor     = [Drawing.Color]::Transparent
+    $grip.ForeColor     = [Drawing.Color]::FromArgb(130, 255, 255, 255)
+    $grip.Cursor        = [System.Windows.Forms.Cursors]::SizeNWSE
+    $grip.Visible       = $false                 # 平时藏着，鼠标进来才亮
+
+    $gear               = New-Object System.Windows.Forms.Label
+    $gear.Text          = [string][char]0x2699   # ⚙ 齿轮＝设置
+    $gear.AutoSize      = $false
+    $gear.Size          = New-Object Drawing.Size($script:GripSize, $script:GripSize)
+    $gear.TextAlign     = 'MiddleCenter'
+    $gear.Font          = New-Object Drawing.Font('微软雅黑', [float][Math]::Max(9, 10 * $script:Scale))
+    $gear.BackColor     = [Drawing.Color]::Transparent
+    $gear.ForeColor     = [Drawing.Color]::FromArgb(130, 255, 255, 255)
+    $gear.Cursor        = [System.Windows.Forms.Cursors]::Hand
+    $gear.Visible       = $false
+    $gear.Add_Click({ try { Show-Settings } catch { Dbg "设置窗口出错: $($_.Exception.Message)" } })
+
+    function Update-HandlePos {
+        # 两个把手贴在右下角：⚙ 在左，◢ 在最右
+        $g = $script:GripSize
+        $w = $form.ClientSize.Width
+        $h = $form.ClientSize.Height
+        $grip.Location = New-Object Drawing.Point(($w - $g), ($h - $g))
+        $gear.Location = New-Object Drawing.Point([Math]::Max(0, $w - $g * 2 - 2), ($h - $g))
+    }
+    $form.Controls.Add($grip)
+    $form.Controls.Add($gear)
+    $grip.BringToFront()
+    $gear.BringToFront()
+    Update-HandlePos
+
+    function Show-Handles([bool]$on) {
+        if ($on) {
+            $grip.Visible = $true
+            $gear.Visible = $true
+            $grip.BringToFront()
+            $gear.BringToFront()
+        } elseif (-not $script:GripActive) {
+            $grip.Visible = $false
+            $gear.Visible = $false
+        }
+    }
+    # 鼠标进条子 → 把手出现；离开 → 收起（不挡字幕，但永远找得到）
+    foreach ($c in @($form, $lblZh, $lblJa, $grip, $gear)) {
+        $c.Add_MouseEnter({ Show-Handles $true })
+        $c.Add_MouseLeave({ Show-Handles $false })
+    }
+    Dbg "标签创建完成（含右下角缩放把手与设置按钮）"
+
 
     # 按模式决定谁显示
     function Apply-Mode {
@@ -526,24 +589,86 @@ public class Win32CS {
     }
     Clamp-Pos   # 上次要是被拖到屏幕外了，启动就拉回来
 
-    # 滚轮：直接滚 = 整条放大缩小；按住 Ctrl 滚 = 只调字号
-    # 为什么分两种：直接滚是最直觉的用法（整条一起变大变小）；
-    # 偶尔会遇到「条子已经够大、但字还想再大一点」，那种情况用 Ctrl+滚 单独调字。
-    # 位置不动（只往右下长），滚过头了有 Clamp-Pos 兜底，不会跑出屏幕。
-    $onWheel = {
-        $ctrl = ([System.Windows.Forms.Control]::ModifierKeys -band [System.Windows.Forms.Keys]::Control) -ne 0
-        $up   = $_.Delta -gt 0
+    # ---------- 4c. 拖右下角把手 = 整条等比缩放 ----------
+    # 这是"主入口"：不用记任何键，看见就能拖。滚轮保留为快捷方式。
+    $script:GripDrag  = $false
+    $script:GripPt    = New-Object Drawing.Point(0, 0)
+    $script:GripBaseW = 0
+    $script:GripBaseH = 0
+    $script:GripBaseZ = 0
+    $script:GripBaseJ = 0
 
-        if ($ctrl) {
-            # —— 只调字号（老行为，原样保留）——
-            $d = if ($up) { 1 } else { -1 }
-            $cfg.fontSizeZh = [Math]::Max(14, [Math]::Min(80, [int]$cfg.fontSizeZh + $d * 2))
-            $cfg.fontSizeJa = [Math]::Max(10, [Math]::Min(50, [int]$cfg.fontSizeJa + $d))
-            $lblZh.Font = New-Object Drawing.Font('微软雅黑', [float]$cfg.fontSizeZh, [Drawing.FontStyle]::Bold)
-            $lblJa.Font = New-Object Drawing.Font('微软雅黑', [float]$cfg.fontSizeJa)
+    $gripDown = {
+        # 只认左键：右键要留给和托盘一致的菜单
+        if (([System.Windows.Forms.Control]::MouseButtons -band [System.Windows.Forms.MouseButtons]::Left) -eq 0) { return }
+        $script:GripDrag   = $true
+        $script:GripActive = $true
+        $script:GripPt     = [System.Windows.Forms.Cursor]::Position
+        $script:GripBaseW  = [int]$cfg.width
+        $script:GripBaseH  = [int]$cfg.height
+        $script:GripBaseZ  = [int]$cfg.fontSizeZh
+        $script:GripBaseJ  = [int]$cfg.fontSizeJa
+        try { $grip.Capture = $true } catch { }
+    }
+    $gripMove = {
+        if (-not $script:GripDrag) { return }
+        $down = ([System.Windows.Forms.Control]::MouseButtons -band [System.Windows.Forms.MouseButtons]::Left) -ne 0
+        if (-not $down) {
+            # 在条子外面松的手，也要收尾
+            $script:GripDrag   = $false
+            $script:GripActive = $false
+            try { $grip.Capture = $false } catch { }
             Save-Cfg
+            Dbg ("拖拽缩放完成: " + $cfg.width + "x" + $cfg.height)
             return
         }
+        $p     = [System.Windows.Forms.Cursor]::Position
+        $dxLog = ($p.X - $script:GripPt.X) / $script:Scale
+        $ratio = ($script:GripBaseW + $dxLog) / [double]$script:GripBaseW
+        if ($ratio -lt 0.3) { $ratio = 0.3 }
+        if ($ratio -gt 5.0) { $ratio = 5.0 }
+
+        $newW  = [Math]::Max(400,  [Math]::Min(3840, [int][Math]::Round($script:GripBaseW * $ratio)))
+        $newH  = [Math]::Max(80,   [Math]::Min(800,  [int][Math]::Round($script:GripBaseH * $ratio)))
+        $newZh = [Math]::Max(14,   [Math]::Min(80,   [int][Math]::Round($script:GripBaseZ * $ratio)))
+        $newJa = [Math]::Max(10,   [Math]::Min(50,   [int][Math]::Round($script:GripBaseJ * $ratio)))
+        if ($newW -eq [int]$cfg.width -and $newH -eq [int]$cfg.height -and
+            $newZh -eq [int]$cfg.fontSizeZh -and $newJa -eq [int]$cfg.fontSizeJa) { return }
+
+        $cfg.width      = $newW
+        $cfg.height     = $newH
+        $cfg.fontSizeZh = $newZh
+        $cfg.fontSizeJa = $newJa
+        # 原文那一行是 Dock=Top 的固定高度，按新条高的 30% 一起长，否则条子大了它还那么薄
+        $lblJa.Height = [int][Math]::Max(24, [Math]::Min(400, [int]($newH * 0.30)))
+        $lblZh.Font   = New-Object Drawing.Font('微软雅黑', [float]$newZh, [Drawing.FontStyle]::Bold)
+        $lblJa.Font   = New-Object Drawing.Font('微软雅黑', [float]$newJa)
+        try {
+            $form.Size = New-Object Drawing.Size([int]($newW * $script:Scale), [int]($newH * $script:Scale))
+            Set-RoundedRegion
+            Update-HandlePos
+            Clamp-Pos
+        } catch { Dbg "拖拽缩放失败: $($_.Exception.Message)" }
+    }
+    $grip.Add_MouseDown($gripDown)
+    $grip.Add_MouseMove($gripMove)
+    $grip.Add_MouseUp({
+        if ($script:GripDrag) {
+            $script:GripDrag   = $false
+            $script:GripActive = $false
+            try { $grip.Capture = $false } catch { }
+            Save-Cfg
+            Dbg ("拖拽缩放完成: " + $cfg.width + "x" + $cfg.height)
+        }
+    })
+    Dbg "右下角把手拖拽绑定完成"
+
+    # 滚轮（保留为快捷方式）：滚 = 整条放大缩小。
+    # Ctrl+滚 那套已经删掉——它要求用户先知道、再记住组合键，新手根本发现不了；
+    # 「只想调字号」现在去设置窗口的滑块里做，而且看得见当前值。
+    # 位置不动（只往右下长），滚过头了有 Clamp-Pos 兜底，不会跑出屏幕。
+    $onWheel = {
+        $up = $_.Delta -gt 0
 
         # —— 整条缩放：宽、高、两行字号按同一比例变 ——
         $step  = if ($up) { 1.08 } else { 1 / 1.08 }
@@ -565,6 +690,7 @@ public class Win32CS {
         try {
             $form.Size = New-Object Drawing.Size([int]($cfg.width * $script:Scale), [int]($cfg.height * $script:Scale))
             Set-RoundedRegion
+            Update-HandlePos
             Clamp-Pos
         } catch { Dbg "滚轮缩放失败: $($_.Exception.Message)" }
         Save-Cfg
@@ -852,7 +978,7 @@ public class Win32Icon {
     function Show-Settings {
         $dlg = New-Object System.Windows.Forms.Form
         $dlg.Text            = '实时字幕 · 设置'
-        $dlg.ClientSize      = New-Object Drawing.Size(520, 598)
+        $dlg.ClientSize      = New-Object Drawing.Size(520, 674)
         $dlg.StartPosition   = 'CenterScreen'
         $dlg.TopMost         = $true
         $dlg.FormBorderStyle = 'FixedDialog'
@@ -860,7 +986,23 @@ public class Win32Icon {
         $dlg.MinimizeBox     = $false
         $dlg.Font            = New-Object Drawing.Font('微软雅黑', 10)
 
-        $ly = 20
+        $ly = 16
+
+        # 分区标题：一眼看出「这一块是管什么的」。
+        # 为什么分区：以前 20 多个控件平铺下来，找一项要来回扫。
+        # 现在按「你什么时候会用到」分四组，不用记顺序。
+        function New-SectionTitle([string]$t, [int]$y) {
+            $lb = New-Object System.Windows.Forms.Label
+            $lb.Text = "── $t ──"
+            $lb.Location = New-Object Drawing.Point(20, $y)
+            $lb.Size = New-Object Drawing.Size(470, 22)
+            $lb.Font = New-Object Drawing.Font('微软雅黑', 10, [Drawing.FontStyle]::Bold)
+            $lb.ForeColor = [Drawing.Color]::FromArgb(70, 110, 180)
+            $dlg.Controls.Add($lb)
+            return 22
+        }
+        $ly += (New-SectionTitle '语音' $ly)
+
         # 识别语言：换完按「应用并保存」会自动重开一次 whisper-stream
         $lbLang = New-Object System.Windows.Forms.Label
         $lbLang.Text = '识别语言'; $lbLang.Location = New-Object Drawing.Point(20, ($ly+5)); $lbLang.Size = New-Object Drawing.Size(90,24)
@@ -878,7 +1020,7 @@ public class Win32Icon {
         $lbLangTip.Location = New-Object Drawing.Point(280, ($ly+5)); $lbLangTip.Size = New-Object Drawing.Size(230,24)
         $lbLangTip.ForeColor = [Drawing.Color]::Gray
         $dlg.Controls.Add($lbLangTip)
-        $ly += 46
+        $ly += 40
 
         # 录音设备：字幕不出字的时候，换一个编号再试
         $devNames = @(Get-CaptureDevices)
@@ -902,7 +1044,9 @@ public class Win32Icon {
         $lbDevTip.Location = New-Object Drawing.Point(410, ($ly+5)); $lbDevTip.Size = New-Object Drawing.Size(110,24)
         $lbDevTip.ForeColor = [Drawing.Color]::Gray
         $dlg.Controls.Add($lbDevTip)
-        $ly += 46
+        $ly += 40
+
+        $ly += (New-SectionTitle '外观' $ly)
 
         $lb1 = New-Object System.Windows.Forms.Label
         $lb1.Text = '中文字号'; $lb1.Location = New-Object Drawing.Point(20, ($ly+5)); $lb1.Size = New-Object Drawing.Size(90,24)
@@ -918,7 +1062,7 @@ public class Win32Icon {
         $n2.Minimum = 10; $n2.Maximum = 50; $n2.Value = [int]$cfg.fontSizeJa
         $n2.Location = New-Object Drawing.Point(340, $ly); $n2.Size = New-Object Drawing.Size(90,28)
         $dlg.Controls.Add($n2)
-        $ly += 46
+        $ly += 40
 
         # 字幕条整体宽高：字调大了条子也得跟着长，不然字被切掉
         $lb6 = New-Object System.Windows.Forms.Label
@@ -940,7 +1084,7 @@ public class Win32Icon {
         $lb6c.Location = New-Object Drawing.Point(340, ($ly+5)); $lb6c.Size = New-Object Drawing.Size(120,24)
         $lb6c.ForeColor = [Drawing.Color]::Gray
         $dlg.Controls.Add($lb6c)
-        $ly += 46
+        $ly += 40
 
         $lb3 = New-Object System.Windows.Forms.Label
         $lb3.Text = '停留秒数'; $lb3.Location = New-Object Drawing.Point(20, ($ly+5)); $lb3.Size = New-Object Drawing.Size(90,24)
@@ -956,7 +1100,7 @@ public class Win32Icon {
         $n4.DecimalPlaces = 2; $n4.Minimum = 0.2; $n4.Maximum = 1.0; $n4.Increment = 0.05; $n4.Value = [decimal]$cfg.opacity
         $n4.Location = New-Object Drawing.Point(340, $ly); $n4.Size = New-Object Drawing.Size(90,28)
         $dlg.Controls.Add($n4)
-        $ly += 46
+        $ly += 40
 
         $lb5 = New-Object System.Windows.Forms.Label
         $lb5.Text = '显示模式'; $lb5.Location = New-Object Drawing.Point(20, ($ly+5)); $lb5.Size = New-Object Drawing.Size(90,24)
@@ -973,7 +1117,7 @@ public class Win32Icon {
             default  { $r1.Checked = $true }
         }
         foreach ($r in @($r1,$r2,$r3)) { $dlg.Controls.Add($r) }
-        $ly += 46
+        $ly += 40
 
         # 外观主题：一键换配色（只动颜色和透明度，字号、大小都不碰）
         $lbTheme = New-Object System.Windows.Forms.Label
@@ -1001,7 +1145,9 @@ public class Win32Icon {
         $lbThemeTip.Location = New-Object Drawing.Point(280, ($ly+5)); $lbThemeTip.Size = New-Object Drawing.Size(230,24)
         $lbThemeTip.ForeColor = [Drawing.Color]::Gray
         $dlg.Controls.Add($lbThemeTip)
-        $ly += 46
+        $ly += 40
+
+        $ly += (New-SectionTitle '翻译' $ly)
 
         # 翻译接口：选预设会自动把下面的地址和变量名填好；换完点「应用并保存」才真的换。
         $lbApi = New-Object System.Windows.Forms.Label
@@ -1026,7 +1172,7 @@ public class Win32Icon {
         $lbApiTip.Location = New-Object Drawing.Point(280, ($ly+5)); $lbApiTip.Size = New-Object Drawing.Size(230,24)
         $lbApiTip.ForeColor = [Drawing.Color]::Gray
         $dlg.Controls.Add($lbApiTip)
-        $ly += 46
+        $ly += 40
 
         # 密钥变量名 + 接口地址：都能手填，方便接自己的服务
         $lbKey = New-Object System.Windows.Forms.Label
@@ -1043,7 +1189,7 @@ public class Win32Icon {
         $tbUrl.Text = "$($cfg.apiUrl)"
         $tbUrl.Location = New-Object Drawing.Point(355, $ly); $tbUrl.Size = New-Object Drawing.Size(155,28)
         $dlg.Controls.Add($tbUrl)
-        $ly += 46
+        $ly += 40
         $lbKeyNote = New-Object System.Windows.Forms.Label
         $lbKeyNote.Text = '密钥本身不写进配置文件，只写「从哪个环境变量取」——这样配置文件泄露也不会丢密钥。'
         $lbKeyNote.Location = New-Object Drawing.Point(20, ($ly+2)); $lbKeyNote.Size = New-Object Drawing.Size(490,22)
@@ -1051,12 +1197,39 @@ public class Win32Icon {
         $dlg.Controls.Add($lbKeyNote)
         $ly += 30
 
+        # ---------- 高级：默认收起 ----------
+        # 放进来的都是「出问题才回来动」的项，平时不该占视线。
+        $ly += (New-SectionTitle '高级（出问题再打开）' $ly)
+
+        $ckAdv = New-Object System.Windows.Forms.CheckBox
+        $ckAdv.Text = '显示高级选项'
+        $ckAdv.Location = New-Object Drawing.Point(20, $ly); $ckAdv.Size = New-Object Drawing.Size(220, 26)
+        $ckAdv.Checked = $false
+        $dlg.Controls.Add($ckAdv)
+        $ly += 34
+
         $ck1 = New-Object System.Windows.Forms.CheckBox
         $ck1.Text = '鼠标点不到字幕条（看片时开；开了它就拖不动）'
         $ck1.Location = New-Object Drawing.Point(20, $ly); $ck1.Size = New-Object Drawing.Size(470,26)
         $ck1.Checked = [bool]$cfg.clickThrough
+        $ck1.Visible = $false
         $dlg.Controls.Add($ck1)
         $ly += 40
+
+        $ckHot = New-Object System.Windows.Forms.CheckBox
+        $ckHot.Text = '启用全局热键 Ctrl+Alt+Z（一键切换「挡不挡鼠标」）'
+        $ckHot.Location = New-Object Drawing.Point(20, $ly); $ckHot.Size = New-Object Drawing.Size(470,26)
+        $ckHot.Checked = [bool]$cfg.hotkeyEnabled
+        $ckHot.Visible = $false
+        $dlg.Controls.Add($ckHot)
+        $ly += 40
+
+        $advCtrls = @($ck1, $ckHot)
+        $ckAdv.Add_CheckedChanged({
+            $on = [bool]$ckAdv.Checked
+            $ckAdv.Text = if ($on) { '收起高级选项' } else { '显示高级选项' }
+            foreach ($c in $advCtrls) { $c.Visible = $on }
+        })
 
         $btnDiag = New-Object System.Windows.Forms.Button
         $btnDiag.Text = '环境自检'
@@ -1075,7 +1248,7 @@ public class Win32Icon {
 
         $tip = New-Object System.Windows.Forms.Label
         $tip.Text = '调字号 / 不透明度 / 显示模式，字幕条立刻就变。「应用并保存」才算数；点「关闭（不保存）」全部退回原样。'
-        $tip.Location = New-Object Drawing.Point(20, ($ly+50)); $tip.Size = New-Object Drawing.Size(470, 24)
+        $tip.Location = New-Object Drawing.Point(20, ($ly+38)); $tip.Size = New-Object Drawing.Size(470, 24)
         $tip.ForeColor = [Drawing.Color]::Gray
         $dlg.Controls.Add($tip)
 
@@ -1095,6 +1268,7 @@ public class Win32Icon {
         $snapApiUrl  = "$($cfg.apiUrl)"
         $snapApiEnv  = "$($cfg.apiKeyEnv)"
         $snapApiMdl  = "$($cfg.translateModel)"
+        $snapHotkey  = [bool]$cfg.hotkeyEnabled
 
         $n1.Add_ValueChanged({
             $lblZh.Font = New-Object Drawing.Font('微软雅黑', [float]$n1.Value, [Drawing.FontStyle]::Bold)
@@ -1164,6 +1338,7 @@ public class Win32Icon {
             elseif ($r3.Checked) { $cfg.mode = 'jaOnly' }
             else { $cfg.mode = 'both'; $cfg.showJapanese = $true }
             Set-ClickThrough ([bool]$ck1.Checked)
+            $cfg.hotkeyEnabled = [bool]$ckHot.Checked
 
             # 翻译接口：地址和变量名以输入框为准；模型名跟着预设走（选「自定义」就保持原样）
             $cfg.apiUrl    = "$($tbUrl.Text)".Trim()
@@ -1187,6 +1362,7 @@ public class Win32Icon {
             try {
                 $form.Size = New-Object Drawing.Size([int]($cfg.width * $script:Scale), [int]($cfg.height * $script:Scale))
                 Set-RoundedRegion
+                Update-HandlePos
                 Clamp-Pos
             } catch { Dbg "应用尺寸失败: $($_.Exception.Message)" }
 
@@ -1238,9 +1414,11 @@ public class Win32Icon {
             $cfg.apiUrl         = $snapApiUrl
             $cfg.apiKeyEnv      = $snapApiEnv
             $cfg.translateModel = $snapApiMdl
+            $cfg.hotkeyEnabled  = $snapHotkey
             try {
                 $form.Size = New-Object Drawing.Size([int]($snapW * $script:Scale), [int]($snapH * $script:Scale))
                 Set-RoundedRegion
+                Update-HandlePos
                 Clamp-Pos
             } catch { }
             Apply-Bg
@@ -1254,7 +1432,7 @@ public class Win32Icon {
         # 字是点单位会自己变大、框还是老尺寸 —— 于是字挤在框里、行距发紧。
         # 显示前统一乘一遍，最省事也最不容易漏。
         if ($script:Scale -ne 1.0) {
-            $dlg.ClientSize = New-Object Drawing.Size([int](520 * $script:Scale), [int](598 * $script:Scale))
+            $dlg.ClientSize = New-Object Drawing.Size([int](520 * $script:Scale), [int](674 * $script:Scale))
             foreach ($c in @($dlg.Controls)) {
                 $c.Location = New-Object Drawing.Point([int]($c.Location.X * $script:Scale), [int]($c.Location.Y * $script:Scale))
                 $c.Size     = New-Object Drawing.Size([int]($c.Size.Width * $script:Scale), [int]($c.Size.Height * $script:Scale))
@@ -1280,11 +1458,11 @@ public class Win32Icon {
 
     # ---------- 5e. 字幕条自己也能右键 / 双击 ----------
     # 之前右键菜单只挂在托盘图标上，在黑条上点右键当然没反应
-    foreach ($c in @($form, $lblJa, $lblZh)) { $c.ContextMenuStrip = $menu }
+    foreach ($c in @($form, $lblJa, $lblZh, $grip, $gear)) { $c.ContextMenuStrip = $menu }
     foreach ($c in @($form, $lblJa, $lblZh)) {
         $c.Add_DoubleClick({ try { Show-Settings } catch { Dbg "设置窗口出错: $($_.Exception.Message)" } })
     }
-    Dbg "字幕条右键菜单 / 双击设置已挂上"
+    Dbg "字幕条右键菜单 / 双击设置 / 右下角把手已挂上"
 
     # ---------- 6. 轮询 / 测试喂句 ----------
     $script:LastLine    = ''
@@ -1387,8 +1565,14 @@ public class HKFilter : IMessageFilter {
                 $tray.ShowBalloonTip(2500, '实时字幕', $tip, [System.Windows.Forms.ToolTipIcon]::Info)
             } catch { }
         }
-        $script:HotKeyOk = [W.HK]::RegisterHotKey($form.Handle, 1, 0x0001 -bor 0x0002, 0x5A)
-        Dbg "全局热键 Ctrl+Alt+Z 注册: $($script:HotKeyOk)"
+        # 按配置决定要不要注册：嫌组合键难记，可以在「设置 → 高级」里关掉
+        if ([bool]$cfg.hotkeyEnabled) {
+            $script:HotKeyOk = [W.HK]::RegisterHotKey($form.Handle, 1, 0x0001 -bor 0x0002, 0x5A)
+            Dbg "全局热键 Ctrl+Alt+Z 注册: $($script:HotKeyOk)"
+        } else {
+            $script:HotKeyOk = $false
+            Dbg "全局热键已在设置里关闭，跳过注册"
+        }
     } catch { Dbg "热键初始化失败: $($_.Exception.Message)" }
 
     # 窗口真正显示后再设穿透
