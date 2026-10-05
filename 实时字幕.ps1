@@ -13,11 +13,14 @@
     测试模式：-TestMode 不抓声音，循环喂预设句子，用来看字幕长什么样。
 #>
 param(
-    [string]$ModelPath      = 'C:\Users\Administrator\AppData\Local\github.com.thewh1teagle.vibe\ggml-large-v3-turbo.bin',
-    [string]$WhisperStream  = 'D:\Retri\subtitle-toolkit\whispercpp-gpu\Release\whisper-stream.exe',
-    [int]   $CaptureDevice  = 2,
+    # 路径类参数一律留空 —— 真正的默认值在下面按「脚本自己所在的目录」算出来，
+    # 这样别人把项目 clone 到任何盘、任何文件夹都能直接跑，不用改代码。
+    # 优先级：命令行参数  >  subtitle-config.json（setup.ps1 探测后写进去的）  >  按脚本目录推算
+    [string]$ModelPath      = '',
+    [string]$WhisperStream  = '',
+    [int]   $CaptureDevice  = -1,     # -1 = 还没定，等配置文件或 setup.ps1 说话
     [string]$SourceLang     = 'ja',   # 默认识别语言；配置文件里的 sourceLang 优先
-    [string]$ApiKeyFile     = 'D:\Retri\sf_review_fast.py',
+    [string]$ApiKeyFile     = '',     # 可选的密钥兜底文件；留空就不读
     [string]$ApiUrl         = 'https://api.siliconflow.cn/v1/chat/completions',
     [string]$TranslateModel = 'Qwen/Qwen2.5-7B-Instruct',
     [switch]$TestMode
@@ -27,10 +30,30 @@ $script:Root    = Split-Path -Parent $MyInvocation.MyCommand.Path
 $script:DbgPath = Join-Path $script:Root 'debug.log'
 Remove-Item $script:DbgPath -ErrorAction SilentlyContinue
 
+# 默认路径按「脚本自己所在目录」算 —— 不写死任何人的盘符和用户名。
+# 有独显的机器 setup.ps1 把引擎装在 whispercpp-gpu\，没独显的装在 whispercpp\，
+# 所以两个位置都记下来，后面哪个存在就用哪个。
+$script:PathWsGpu = Join-Path $script:Root 'whispercpp-gpu\Release\whisper-stream.exe'
+$script:PathWsCpu = Join-Path $script:Root 'whispercpp\bin\Release\whisper-stream.exe'
+$script:PathModel = Join-Path $script:Root 'models\ggml-large-v3-turbo.bin'
+
 function Dbg([string]$m) {
     try {
         Add-Content -LiteralPath $script:DbgPath -Value ("{0}  {1}" -f (Get-Date -Format 'HH:mm:ss.fff'), $m) -Encoding UTF8
     } catch { }
+}
+
+# 按「进程 → 用户 → 机器」三级去找环境变量。
+# 为什么不能只用 $env:XXX：那只看「当前进程」那一份。而用户一般是在系统设置里加的变量
+# （那是用户级），已经开着的进程不会自动刷新，结果就是「我明明设了，它却说没设」。
+# 三级都找一遍，对别人最友好。
+function Get-EnvAny([string]$name) {
+    if ([string]::IsNullOrWhiteSpace($name)) { return $null }
+    foreach ($scope in @('Process', 'User', 'Machine')) {
+        $v = [Environment]::GetEnvironmentVariable($name, $scope)
+        if (-not [string]::IsNullOrWhiteSpace($v)) { return $v }
+    }
+    return $null
 }
 
 Dbg "脚本开始，Root=$script:Root  TestMode=$TestMode"
@@ -181,9 +204,9 @@ public class Win32CS {
         sourceLang     = "$SourceLang"   # 识别语言：ja/en/ko/ru/fr/de/es/it/auto
         mode           = 'both'  # both=双语 / zhOnly=只有中文 / jaOnly=只有原文
         clickThrough   = $false  # 默认能被鼠标点中（能拖、能滚轮）；看片时从托盘打开穿透
-        captureDevice  = $CaptureDevice  # 录音设备编号；换电脑时装在这台机器上的值说了算
-        modelPath      = "$ModelPath"    # 识别模型文件路径；同上
-        whisperStream  = "$WhisperStream"  # 识别引擎路径；同上
+        captureDevice  = $CaptureDevice  # 录音设备编号；setup.ps1 探测后写进配置文件
+        modelPath      = if ("$ModelPath" -ne '')     { "$ModelPath" }     else { "$script:PathModel" }
+        whisperStream  = if ("$WhisperStream" -ne '') { "$WhisperStream" } else { "$script:PathWsGpu" }
         apiUrl         = "$ApiUrl"         # 翻译接口地址；换别家模型服务时改这里（设置窗口里也能改）
         translateModel = "$TranslateModel" # 翻译用的模型名
         apiKeyEnv      = 'SILICONFLOW_API_KEY'  # 从哪个环境变量取密钥。★ 这里只存变量名，不存密钥本身
@@ -201,9 +224,22 @@ public class Win32CS {
     Dbg "配置读取完成，识别语言=$($script:EffLang)"
     # 生效设备与模型：配置文件里写了就用它，没写就用启动参数里的默认值
     # （setup.ps1 装到别的电脑上时只写配置文件，不动源码）
-    $script:EffDevice = if ($null -ne $cfg.captureDevice) { [int]$cfg.captureDevice } else { [int]$CaptureDevice }
-    $script:EffModel  = if ("$($cfg.modelPath)" -ne '')     { "$($cfg.modelPath)" }     else { "$ModelPath" }
-    $script:EffWs     = if ("$($cfg.whisperStream)" -ne '') { "$($cfg.whisperStream)" } else { "$WhisperStream" }
+    $script:EffDevice = if ($null -ne $cfg.captureDevice -and [int]$cfg.captureDevice -ge 0) { [int]$cfg.captureDevice } else { [int]$CaptureDevice }
+    $script:EffModel  = if ("$($cfg.modelPath)" -ne '')     { "$($cfg.modelPath)" }     else { "$script:PathModel" }
+    $script:EffWs     = if ("$($cfg.whisperStream)" -ne '') { "$($cfg.whisperStream)" } else { "$script:PathWsGpu" }
+
+    # 兜底：配置文件里的路径不存在时（换了电脑、换了盘符、或者 setup 装在别的位置），
+    # 就在项目目录里自己找一遍 —— 引擎 GPU 版优先、其次 CPU 版；模型挑 models\ 下最大的那个 .bin。
+    if (-not (Test-Path $script:EffWs)) {
+        foreach ($cand in @($script:PathWsGpu, $script:PathWsCpu)) {
+            if (Test-Path $cand) { $script:EffWs = $cand; Dbg "引擎路径自动改为: $cand"; break }
+        }
+    }
+    if (-not (Test-Path $script:EffModel)) {
+        $mf = Get-ChildItem (Join-Path $script:Root 'models') -Filter '*.bin' -File -ErrorAction SilentlyContinue |
+              Sort-Object Length -Descending | Select-Object -First 1
+        if ($mf) { $script:EffModel = $mf.FullName; Dbg "模型路径自动改为: $($mf.FullName)" }
+    }
     Dbg "生效设备=$($script:EffDevice) 模型=$($script:EffModel) 引擎=$($script:EffWs)"
 
     function Save-Cfg {
@@ -214,9 +250,11 @@ public class Win32CS {
 
     # ---------- 2. 取翻译密钥（不回显） ----------
     # 环境变量名从配置里来（默认 SILICONFLOW_API_KEY）。取不到会返回 $null，走下面的文件兜底。
-    $script:ApiKey = [Environment]::GetEnvironmentVariable("$($cfg.apiKeyEnv)")
-    if (-not $script:ApiKey -and (Test-Path $ApiKeyFile)) {
-        $m = [regex]::Match((Get-Content $ApiKeyFile -Raw), 'KEY\s*=\s*"([^"]+)"')
+    $script:ApiKey = Get-EnvAny -name "$($cfg.apiKeyEnv)"
+    # 注意：$ApiKeyFile 默认是空串，而 Test-Path 收到空串会直接抛异常（不是返回 false），
+    # 所以必须先判空 —— 这个坑是改了默认值之后才暴露出来的。
+    if (-not $script:ApiKey -and "$ApiKeyFile" -ne '' -and (Test-Path -LiteralPath $ApiKeyFile)) {
+        $m = [regex]::Match((Get-Content -LiteralPath $ApiKeyFile -Raw), 'KEY\s*=\s*"([^"]+)"')
         if ($m.Success) { $script:ApiKey = $m.Groups[1].Value }
     }
     $script:HasApi = [bool]$script:ApiKey
@@ -275,8 +313,28 @@ public class Win32CS {
     if ($TestMode) {
         Dbg "测试模式：不启动 whisper-stream"
     } else {
-        if (-not (Test-Path $script:EffWs))    { throw "找不到 whisper-stream.exe：$($script:EffWs)" }
-        if (-not (Test-Path $script:EffModel)) { throw "找不到模型文件：$($script:EffModel)" }
+        # 缺文件时不要闷声 throw —— 程序是隐藏窗口启动的，throw 出去用户什么都看不见，
+        # 只会觉得「双击了没反应」。这里改成弹一个看得见的窗口，告诉他下一步该做什么。
+        $missing = @()
+        if (-not (Test-Path $script:EffWs)) {
+            $missing += "识别引擎 whisper-stream.exe`n      找的位置：$($script:EffWs)"
+        }
+        if (-not (Test-Path $script:EffModel)) {
+            $missing += "识别模型 $([IO.Path]::GetFileName($script:EffModel))`n      找的位置：$($script:EffModel)"
+        }
+        if ($missing.Count -gt 0) {
+            $msg = "还差这些文件，所以现在跑不起来：`n`n  · " + ($missing -join "`n`n  · ") +
+                   "`n`n请先运行一次安装脚本（只需一次）：`n" +
+                   "    右键 setup.ps1  →  使用 PowerShell 运行`n`n" +
+                   "它会自动下载引擎和模型、探出你的录音设备、把路径写进配置文件。`n" +
+                   "装好之后再双击「启动字幕.bat」，就不会再看到这个提示了。"
+            Dbg "缺少运行文件，已弹窗提示（缺 $($missing.Count) 项）"
+            try {
+                Add-Type -AssemblyName System.Windows.Forms
+                [void][System.Windows.Forms.MessageBox]::Show($msg, '实时字幕 · 还没装好', 'OK', 'Warning')
+            } catch { Dbg "弹窗失败: $($_.Exception.Message)" }
+            exit
+        }
         Remove-Item $script:TxtPath -ErrorAction SilentlyContinue
         Start-Whisper
     }
@@ -992,7 +1050,7 @@ public class Win32Icon {
                 if ("$($aaSel.model)" -ne '') { $cfg.translateModel = "$($aaSel.model)" }
             }
             # 换接口后立刻按新变量名再取一次密钥 —— 不然得重启程序才生效
-            $newKey = [Environment]::GetEnvironmentVariable("$($cfg.apiKeyEnv)")
+            $newKey = Get-EnvAny -name "$($cfg.apiKeyEnv)"
             if ($newKey) { $script:ApiKey = $newKey; $script:HasApi = $true }
             Dbg "翻译接口 -> $($cfg.apiUrl) / 变量 $($cfg.apiKeyEnv) / 模型 $($cfg.translateModel) / 密钥就绪 $($script:HasApi)"
 
