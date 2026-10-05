@@ -1,0 +1,8 @@
+# 统一换行=LF（Windows 上编辑器写入 CRLF 会让整份文件在 diff 里变成"全部改动"）
+* text=auto eol=lf
+*.ps1 text eol=lf
+*.bat text eol=crlf
+*.md text eol=lf
+*.json text eol=lf
+*.png binary
+*.ico binary
