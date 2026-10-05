@@ -72,7 +72,42 @@ function Confirm-Step {
 # ============================================================
 # 1. 下载（带进度条 + 断点续传）
 # ============================================================
+# 下载一个文件。$Url 可以给多个候选地址 —— 按顺序试，第一个成功的就用。
+# 为什么这么设计：模型主源在 HuggingFace，国内基本连不上；备源 hf-mirror.com 是它的官方镜像、
+# 内容一模一样。主源失败自动换备源，用户就不用自己去折腾了。
 function Get-RemoteFile {
+    param(
+        [string[]]$Url,
+        [string]$Dest,
+        [string]$Label = '文件'
+    )
+    $urls = @($Url)
+    $errs = @()
+    for ($i = 0; $i -lt $urls.Count; $i++) {
+        $u = $urls[$i]
+        if ($i -gt 0) {
+            Warn "换第 $($i + 1) 个源重试"
+            # 换源前把没下完的临时文件删掉 —— 不同源的 Content-Length 可能不一样，
+            # 硬接着往下拼会得到一个坏文件
+            Remove-Item -LiteralPath "$Dest.part" -Force -ErrorAction SilentlyContinue
+        }
+        try {
+            Get-RemoteFileOne -Url $u -Dest $Dest -Label $Label
+            if ($i -gt 0) { Ok "换个源就下成了：$u" }
+            return
+        } catch {
+            $errs += ("  · {0}`n      {1}" -f $u, $_.Exception.Message)
+            Warn "这个源不行：$($_.Exception.Message)"
+        }
+    }
+    Say ''
+    Bad "$Label 的下载源都试过了，没一个成功："
+    foreach ($e in $errs) { Say $e }
+    throw "$Label 下载失败（所有源都试过）"
+}
+
+# 单个源的下载实现（带进度条 + 断点续传）
+function Get-RemoteFileOne {
     param(
         [string]$Url,
         [string]$Dest,
@@ -99,7 +134,7 @@ function Get-RemoteFile {
         if ($have -gt 0) {
             Warn '上次的临时文件服务器接不上，从头下一遍'
             Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
-            return Get-RemoteFile -Url $Url -Dest $Dest -Label $Label
+            return Get-RemoteFileOne -Url $Url -Dest $Dest -Label $Label
         }
         throw
     }
@@ -110,7 +145,7 @@ function Get-RemoteFile {
             $resp.Close()
             Warn '服务器不支持断点续传，从头下一遍'
             Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
-            return Get-RemoteFile -Url $Url -Dest $Dest -Label $Label
+            return Get-RemoteFileOne -Url $Url -Dest $Dest -Label $Label
         }
 
         $remain = [long]$resp.ContentLength
@@ -166,13 +201,15 @@ function Get-RemoteFile {
 #        安装包挂在紧随其后的另一个 tag 下面。所以不能直接用 releases/latest。
 # ============================================================
 function Find-EngineAsset {
-    param([string]$AssetName)
+    param([string]$AssetPattern)   # 可以带 * 通配，例如 whisper-cublas-*-bin-x64.zip
     $api = 'https://api.github.com/repos/ggml-org/whisper.cpp/releases?per_page=20'
     Note '正在问 GitHub：whisper.cpp 有哪些版本…'
     $rels = Invoke-RestMethod -Uri $api -Headers @{ 'User-Agent' = 'subtitle-toolkit-setup' } -TimeoutSec 30
     foreach ($r in $rels) {
         foreach ($a in @($r.assets)) {
-            if ("$($a.name)" -eq $AssetName) {
+            # 用 -like 而不是 -eq：CUDA 版本号会随 whisper.cpp 发版而变，
+            # 写死完整文件名的话，新版一出来这里就匹配不到了。
+            if ("$($a.name)" -like $AssetPattern) {
                 return [pscustomobject]@{
                     Tag  = $r.tag_name
                     Name = "$($a.name)"
@@ -329,38 +366,44 @@ if ($Cpu) { $hasNv = $false; Note '（你指定了 -Cpu，按没有独显处理�
 if ($hasNv) {
     Ok "找到 NVIDIA 显卡：$nvName"
     Note '走显卡路线，识别快，能做到实时'
-    $engineZip = 'whisper-cublas-12.4.0-bin-x64.zip'
-    $engineDir = 'whispercpp-gpu'
+    # 用通配符找：whisper.cpp 发新版时 CUDA 版本号会跟着变（12.4.0 → 12.5.0 …），
+    # 写死完整文件名的话，新版本一出来这里就找不到了。
+    $enginePattern = 'whisper-cublas-*-bin-x64.zip'
+    $engineDir     = 'whispercpp-gpu'
 } else {
     Warn '没找到 NVIDIA 显卡'
     Note '走 CPU 路线，能跑但慢一些，模型也会自动换小一号'
-    $engineZip = 'whisper-bin-x64.zip'
-    $engineDir = 'whispercpp'
+    $enginePattern = 'whisper-bin-x64.zip'
+    $engineDir     = 'whispercpp'
 }
 
+# 引擎解压后 exe 会在哪：GPU 包解出来是 Release\，CPU 包解出来是 bin\Release\ ——
+# 两种结构都认，免得在没独显的机器上每次都误判成「引擎不在」而反复重下。
 $wsExe     = Join-Path $Root "$engineDir\Release\whisper-stream.exe"
-$engineZipPath = Join-Path $Root $engineZip
+$wsExeAlt  = Join-Path $Root "$engineDir\bin\Release\whisper-stream.exe"
 $needEngine = $true
 
 if ($SkipEngine) {
     $needEngine = $false
     Note '（你说了跳过引擎下载）'
-} elseif (Test-Path -LiteralPath $wsExe) {
+} elseif ((Test-Path -LiteralPath $wsExe) -or (Test-Path -LiteralPath $wsExeAlt)) {
+    if (-not (Test-Path -LiteralPath $wsExe)) { $wsExe = $wsExeAlt }
     Ok "识别引擎已经在了：$wsExe"
     $needEngine = $false
     if (Confirm-Step '要不要重新下载一份覆盖它？' $false) { $needEngine = $true }
 }
 
 if ($needEngine) {
-    Note "要下的文件：$engineZip"
-    $url = $null
+    Note "要找的安装包：$enginePattern"
+    $url = $null; $engineZip = $null
     try {
-        $found = Find-EngineAsset -AssetName $engineZip
+        $found = Find-EngineAsset -AssetPattern $enginePattern
         if ($found) {
-            $url = $found.Url
-            Ok ("找到安装包，来自 {0} 版（{1:N1} MB）" -f $found.Tag, ($found.Size / 1MB))
+            $url       = $found.Url
+            $engineZip = $found.Name     # 真实文件名（可能和模式不完全一样）
+            Ok ("找到安装包 {0}，来自 {1} 版（{2:N1} MB）" -f $found.Name, $found.Tag, ($found.Size / 1MB))
         } else {
-            Bad "在最近 20 个版本里没找到 $engineZip"
+            Bad "最近 20 个版本里没有匹配 $enginePattern 的安装包"
         }
     } catch {
         Bad "连不上 GitHub：$($_.Exception.Message)"
@@ -368,11 +411,12 @@ if ($needEngine) {
     }
     if (-not $url) {
         Bad '引擎没下成，装不下去了'
-        Say  '  你可以手动下：打开 https://github.com/ggml-org/whisper.cpp/releases'
-        Say  "  找到带 $engineZip 的那一版，下下来放到这个目录，再跑一次本脚本。"
+        Say  '  手动来：浏览器打开 https://github.com/ggml-org/whisper.cpp/releases'
+        Say  "  找一个名字像 $enginePattern 的压缩包下下来"
+        Say  "  放进 $Root ，再重新跑一次本脚本（它会发现文件已在，跳过下载）"
         exit 1
     }
-
+    $engineZipPath = Join-Path $Root $engineZip
     if (Test-Path -LiteralPath $engineZipPath) { Remove-Item -LiteralPath $engineZipPath -Force }
     Get-RemoteFile -Url $url -Dest $engineZipPath -Label '识别引擎'
 }
@@ -466,14 +510,22 @@ if ($SkipModel) {
 
 if ($needModel) {
     if (-not (Test-Path -LiteralPath $modelDir)) { New-Item -ItemType Directory -Path $modelDir -Force | Out-Null }
-    $modelUrl = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/$modelFile"
-    Note '下载源：HuggingFace 官方（模型文件本身来自 OpenAI，MIT 许可）'
-    Note '国内如果太慢，可以手动去 hf-mirror.com 下同一个文件，放进来再跑一次'
+    # 主源是 HuggingFace 官方；备源 hf-mirror.com 是它的官方镜像，内容完全一致。
+    # 国内直连主源基本不通，所以失败会自动换备源 —— 用户不用自己去折腾。
+    $modelRel  = "ggerganov/whisper.cpp/resolve/main/$modelFile"
+    $modelUrls = @(
+        "https://huggingface.co/$modelRel",
+        "https://hf-mirror.com/$modelRel"
+    )
+    Note '下载源：HuggingFace 官方（连不上会自动换国内镜像 hf-mirror.com）'
     try {
-        Get-RemoteFile -Url $modelUrl -Dest $modelFull -Label '识别模型'
+        Get-RemoteFile -Url $modelUrls -Dest $modelFull -Label '识别模型'
     } catch {
         Bad "模型没下成：$($_.Exception.Message)"
-        Say  '  重新跑一次这个脚本就能接着下（断点续传）。'
+        Say  '  两条路都试过了。还可以手动来：'
+        Say  "    1. 浏览器打开 https://hf-mirror.com/$modelRel"
+        Say  "    2. 把下到的 $modelFile 放进 models\ 目录"
+        Say  '    3. 重新跑一次这个脚本（它会发现文件已存在，跳过下载）'
         exit 1
     }
 }

@@ -620,6 +620,9 @@ public class Win32CS {
     $miPause = $menu.Items.Add('暂停字幕')
     $miPause.Add_Click({ Set-Running (-not $script:Running) })
 
+    $miDiag = $menu.Items.Add('环境自检…')
+    $miDiag.Add_Click({ try { Show-Diagnose } catch { Dbg "自检出错: $($_.Exception.Message)" } })
+
     $null = $menu.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator))
     $null = $menu.Items.Add('保存当前设置', $null, { Save-Cfg })
     $null = $menu.Items.Add('退出', $null, { $form.Close() })
@@ -729,6 +732,121 @@ public class Win32Icon {
             }
         } catch { Dbg "列录音设备失败: $($_.Exception.Message)" }
         return $out.ToArray()
+    }
+
+    # ---------- 5d-1. 环境自检 ----------
+    # 为什么要有这个：别人的电脑上显卡、声卡、密钥各不相同，出问题时只能干瞪眼。
+    # 这里一次性把该查的都查一遍，明确告诉用户「哪项 OK、哪项不行、不行该去动哪里」。
+    # 这正是「对任何机器都能给出正确反应」—— 能不能跑是硬件决定的，说不说得清是我的事。
+    function Show-Diagnose {
+        $L = New-Object System.Collections.ArrayList
+        function Mk([bool]$b) { if ($b) { '[OK]' } else { '[!!]' } }
+
+        [void]$L.Add('实时字幕 · 环境自检')
+        [void]$L.Add('时间：' + (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'))
+        [void]$L.Add('')
+
+        # 1. 配置文件
+        if (Test-Path -LiteralPath $script:CfgPath) {
+            [void]$L.Add("$(Mk $true)  配置文件      $script:CfgPath")
+        } else {
+            [void]$L.Add("$(Mk $false)  配置文件      还没生成（第一次运行时会自动建）")
+        }
+
+        # 2. 识别引擎
+        if (Test-Path -LiteralPath $script:EffWs) {
+            [void]$L.Add("$(Mk $true)  识别引擎      $script:EffWs")
+        } else {
+            [void]$L.Add("$(Mk $false)  识别引擎      找不到：$script:EffWs")
+            [void]$L.Add('        先跑一次 setup.ps1 把引擎装好')
+        }
+
+        # 3. 识别模型
+        if (Test-Path -LiteralPath $script:EffModel) {
+            $mb = [math]::Round((Get-Item -LiteralPath $script:EffModel).Length / 1MB, 1)
+            [void]$L.Add("$(Mk $true)  识别模型      $script:EffModel")
+            [void]$L.Add("        大小 $mb MB")
+        } else {
+            [void]$L.Add("$(Mk $false)  识别模型      找不到：$script:EffModel")
+            [void]$L.Add('        先跑一次 setup.ps1，或者手动把 .bin 放进 models\ 目录')
+        }
+
+        # 4. 录音设备（最容易出问题的一项）
+        $devs   = @(Get-CaptureDevices)
+        $stereo = -1
+        for ($i = 0; $i -lt $devs.Count; $i++) {
+            if ("$($devs[$i])" -match '立体声混音|Stereo Mix|What U Hear|Wave Out|loopback') { $stereo = $i; break }
+        }
+        if ($devs.Count -eq 0) {
+            [void]$L.Add("$(Mk $false)  录音设备      一个都没找到")
+            [void]$L.Add('        右键任务栏喇叭 → 声音设置 → 更多声音设置 → 录制 → 右键空白处勾「显示禁用的设备」')
+        } elseif ($stereo -ge 0) {
+            [void]$L.Add("$(Mk $true)  录音设备      第 $stereo 号是「$($devs[$stereo])」")
+            [void]$L.Add('        录「电脑正在放的声音」就用它')
+            if ([int]$script:EffDevice -ne $stereo) {
+                [void]$L.Add("        注意：配置里现在用的是第 $($script:EffDevice) 号 —— 想换成它，去设置窗口的「录音设备」改")
+            }
+        } else {
+            [void]$L.Add("$(Mk $false)  录音设备      有 $($devs.Count) 个，但没有「立体声混音」")
+            [void]$L.Add('        这台机器的声卡驱动可能不提供它；用耳机听的话，可以选名字带「耳机」的那个试试')
+            for ($i = 0; $i -lt [Math]::Min($devs.Count, 8); $i++) { [void]$L.Add("          [$i] $($devs[$i])") }
+        }
+
+        # 5. 翻译密钥
+        if ($script:HasApi) {
+            [void]$L.Add("$(Mk $true)  翻译密钥      环境变量 $($cfg.apiKeyEnv) 里找到了")
+        } else {
+            [void]$L.Add("$(Mk $false)  翻译密钥      环境变量 $($cfg.apiKeyEnv) 里没找到")
+            [void]$L.Add('        原文照样会显示，但不会出中文。设好这个变量后重启程序')
+        }
+        [void]$L.Add("        接口：$($cfg.apiUrl)")
+        [void]$L.Add("        模型：$($cfg.translateModel)")
+
+        # 6. 显卡
+        try {
+            $vc = @(Get-CimInstance Win32_VideoController -ErrorAction Stop)
+            foreach ($v in $vc) { [void]$L.Add("        显卡：$($v.Name)") }
+            $nv = @($vc | Where-Object { "$($_.Name)" -match 'NVIDIA' })
+            if ($nv.Count -gt 0) {
+                [void]$L.Add("$(Mk $true)  显卡加速      检测到 N 卡，走 GPU 路线（一句约 1.5～2.5 秒）")
+            } else {
+                [void]$L.Add("$(Mk $true)  显卡加速      没检测到 N 卡 —— 只能走 CPU，一句大约 5～8 秒")
+            }
+        } catch {
+            [void]$L.Add("$(Mk $false)  显卡加速      读不到显卡信息：$($_.Exception.Message)")
+        }
+
+        [void]$L.Add('')
+        [void]$L.Add('说明：[OK] 正常    [!!] 有问题，看它下面那行提示')
+
+        # 顺手存一份，出问题时可以直接把这个文件发给别人看
+        try { ($L -join "`r`n") | Set-Content -LiteralPath (Join-Path $script:Root '自检报告.txt') -Encoding UTF8 } catch { }
+
+        # 弹窗显示
+        $dg = New-Object System.Windows.Forms.Form
+        $dg.Text          = '实时字幕 · 环境自检'
+        $dg.ClientSize    = New-Object Drawing.Size(660, 470)
+        $dg.StartPosition = 'CenterScreen'
+        $dg.Font          = New-Object Drawing.Font('微软雅黑', 9)
+        $tb = New-Object System.Windows.Forms.TextBox
+        $tb.Multiline  = $true
+        $tb.ReadOnly   = $true
+        $tb.ScrollBars = 'Both'
+        $tb.WordWrap   = $false
+        $tb.Dock       = 'Fill'
+        $tb.Font       = New-Object Drawing.Font('Consolas', 9)
+        $tb.Text       = ($L -join "`r`n")
+        $dg.Controls.Add($tb)
+        $bd = New-Object System.Windows.Forms.Button
+        $bd.Text = '关闭'
+        $bd.Dock = 'Bottom'
+        $bd.Height = 34
+        $bd.Add_Click({ $dg.Close() })
+        $dg.Controls.Add($bd)
+        $dg.AcceptButton = $bd
+        $dg.CancelButton = $bd
+        Dbg '环境自检已打开'
+        [void]$dg.ShowDialog($form)
     }
 
     function Show-Settings {
@@ -939,6 +1057,12 @@ public class Win32Icon {
         $ck1.Checked = [bool]$cfg.clickThrough
         $dlg.Controls.Add($ck1)
         $ly += 40
+
+        $btnDiag = New-Object System.Windows.Forms.Button
+        $btnDiag.Text = '环境自检'
+        $btnDiag.Location = New-Object Drawing.Point(20, $ly); $btnDiag.Size = New-Object Drawing.Size(90, 34)
+        $btnDiag.Add_Click({ try { Show-Diagnose } catch { Dbg "自检出错: $($_.Exception.Message)" } })
+        $dlg.Controls.Add($btnDiag)
 
         $btnOk = New-Object System.Windows.Forms.Button
         $btnOk.Text = '应用并保存'
