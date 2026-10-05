@@ -441,13 +441,48 @@ public class Win32CS {
     }
     Clamp-Pos   # 上次要是被拖到屏幕外了，启动就拉回来
 
-    # 滚轮调字号
+    # 滚轮：直接滚 = 整条放大缩小；按住 Ctrl 滚 = 只调字号
+    # 为什么分两种：直接滚是最直觉的用法（整条一起变大变小）；
+    # 偶尔会遇到「条子已经够大、但字还想再大一点」，那种情况用 Ctrl+滚 单独调字。
+    # 位置不动（只往右下长），滚过头了有 Clamp-Pos 兜底，不会跑出屏幕。
     $onWheel = {
-        $d = [Math]::Sign($_.Delta)
-        $cfg.fontSizeZh = [Math]::Max(14, [Math]::Min(80, [int]$cfg.fontSizeZh + $d * 2))
-        $cfg.fontSizeJa = [Math]::Max(10, [Math]::Min(50, [int]$cfg.fontSizeJa + $d))
+        $ctrl = ([System.Windows.Forms.Control]::ModifierKeys -band [System.Windows.Forms.Keys]::Control) -ne 0
+        $up   = $_.Delta -gt 0
+
+        if ($ctrl) {
+            # —— 只调字号（老行为，原样保留）——
+            $d = if ($up) { 1 } else { -1 }
+            $cfg.fontSizeZh = [Math]::Max(14, [Math]::Min(80, [int]$cfg.fontSizeZh + $d * 2))
+            $cfg.fontSizeJa = [Math]::Max(10, [Math]::Min(50, [int]$cfg.fontSizeJa + $d))
+            $lblZh.Font = New-Object Drawing.Font('微软雅黑', [float]$cfg.fontSizeZh, [Drawing.FontStyle]::Bold)
+            $lblJa.Font = New-Object Drawing.Font('微软雅黑', [float]$cfg.fontSizeJa)
+            Save-Cfg
+            return
+        }
+
+        # —— 整条缩放：宽、高、两行字号按同一比例变 ——
+        $step  = if ($up) { 1.08 } else { 1 / 1.08 }
+        $newW  = [Math]::Max(400,  [Math]::Min(3840, [int][Math]::Round([int]$cfg.width  * $step)))
+        $newH  = [Math]::Max(80,   [Math]::Min(800,  [int][Math]::Round([int]$cfg.height * $step)))
+        $newZh = [Math]::Max(14,   [Math]::Min(80,   [int][Math]::Round([int]$cfg.fontSizeZh * $step)))
+        $newJa = [Math]::Max(10,   [Math]::Min(50,   [int][Math]::Round([int]$cfg.fontSizeJa * $step)))
+        # 宽高都已经顶到上下限，就什么也不做 —— 免得滚到底还在反复重排
+        if ($newW -eq [int]$cfg.width -and $newH -eq [int]$cfg.height) { return }
+
+        $cfg.width      = $newW
+        $cfg.height     = $newH
+        $cfg.fontSizeZh = $newZh
+        $cfg.fontSizeJa = $newJa
+        # 原文那一行是 Dock=Top 的固定高度（不是撑满），得跟着一起长，否则条子大了它还是那么薄
+        $lblJa.Height = [int][Math]::Max(24, [Math]::Min(400, [double]$lblJa.Height * $step))
         $lblZh.Font = New-Object Drawing.Font('微软雅黑', [float]$cfg.fontSizeZh, [Drawing.FontStyle]::Bold)
         $lblJa.Font = New-Object Drawing.Font('微软雅黑', [float]$cfg.fontSizeJa)
+        try {
+            $form.Size = New-Object Drawing.Size([int]($cfg.width * $script:Scale), [int]($cfg.height * $script:Scale))
+            Set-RoundedRegion
+            Clamp-Pos
+        } catch { Dbg "滚轮缩放失败: $($_.Exception.Message)" }
+        Save-Cfg
     }
     foreach ($c in @($form, $lblJa, $lblZh)) { $c.Add_MouseWheel($onWheel) }
     Dbg "交互事件绑定完成"
