@@ -101,6 +101,9 @@ $script:LangNames = [ordered]@{
     'auto' = '自动检测'
 }
 
+# 2026-10-05 新：翻译目标语言表（快速设置第 3 步「翻成什么」用）
+$script:TargetLangs = [ordered]@{ zh='简体中文'; en='英语'; ja='日语'; ko='韩语'; ru='俄语'; fr='法语'; de='德语'; es='西班牙语' }
+
 # ============ 外观主题 ============
 # 设置窗口里那个「外观主题」下拉框用这几套。要加主题就往这里加一行。
 # 只改配色和透明度，不动字号和大小 —— 字号管「看不看得清」，配色管「看着舒不舒服」，两件事分开。
@@ -202,6 +205,8 @@ public class Win32CS {
         showJapanese   = $true
         holdSeconds    = 10      # 一句话在屏幕上至少留这么久
         sourceLang     = "$SourceLang"   # 识别语言：ja/en/ko/ru/fr/de/es/it/auto
+        translateEnabled = $true  # 是否边听边翻译（关掉＝只显示识别出的原文）
+        targetLang     = 'zh'     # 翻译成哪种语言，默认简体中文
         mode           = 'both'  # both=双语 / zhOnly=只有中文 / jaOnly=只有原文
         clickThrough   = $false  # 默认能被鼠标点中（能拖、能滚轮）；看片时从托盘打开穿透
         captureDevice  = $CaptureDevice  # 录音设备编号；setup.ps1 探测后写进配置文件
@@ -267,11 +272,15 @@ public class Win32CS {
         if (-not $script:HasApi -or [string]::IsNullOrWhiteSpace($text)) { return '' }
         # 提示词跟着识别语言走：选英语就是「把这句英语字幕翻译成简体中文」
         $lang = "$($script:EffLang)"
+        # 2026-10-05：目标语言由配置决定（快速设置第 3 步）
+        $tgtKey = "$($cfg.targetLang)"
+        if (-not $script:TargetLangs.Contains($tgtKey)) { $tgtKey = 'zh' }
+        $tgt = "$($script:TargetLangs[$tgtKey])"
         if ($lang -eq 'auto' -or -not $script:LangNames.Contains($lang)) {
-            $ask = "把下面这句字幕翻译成简体中文。只输出译文本身，不要解释、不要加引号、不要保留原文："
+            $ask = "把下面这句字幕翻译成${tgt}。只输出译文本身，不要解释、不要加引号、不要保留原文："
         } else {
             $nm = $script:LangNames[$lang]
-            $ask = "把下面这句${nm}字幕翻译成简体中文。只输出译文本身，不要解释、不要加引号、不要保留${nm}原文："
+            $ask = "把下面这句${nm}字幕翻译成${tgt}。只输出译文本身，不要解释、不要加引号、不要保留${nm}原文："
         }
         $prompt = $ask + "`n" + $text
         $body = @{
@@ -367,7 +376,7 @@ public class Win32CS {
 
     function Get-BgArgb {
         $a = [int][Math]::Round([double]$cfg.opacity * 255)
-        if ($a -lt 40)  { $a = 40 }
+        if ($a -lt 18)  { $a = 18 }   # 2026-10-05：下限放到 18（约 7%），背景能更透；文字不透明不受影响
         if ($a -gt 255) { $a = 255 }
         return [Drawing.Color]::FromArgb($a, $script:BgColor.R, $script:BgColor.G, $script:BgColor.B)
     }
@@ -457,7 +466,7 @@ public class Win32CS {
     $grip.BackColor     = [Drawing.Color]::Transparent
     $grip.ForeColor     = [Drawing.Color]::FromArgb(130, 255, 255, 255)
     $grip.Cursor        = [System.Windows.Forms.Cursors]::SizeNWSE
-    $grip.Visible       = $false                 # 平时藏着，鼠标进来才亮
+    $grip.Visible       = $true                  # 常驻可见（2026-10-05：藏起来＝用户找不到入口）
 
     $gear               = New-Object System.Windows.Forms.Label
     $gear.Text          = [string][char]0x2699   # ⚙ 齿轮＝设置
@@ -468,36 +477,84 @@ public class Win32CS {
     $gear.BackColor     = [Drawing.Color]::Transparent
     $gear.ForeColor     = [Drawing.Color]::FromArgb(130, 255, 255, 255)
     $gear.Cursor        = [System.Windows.Forms.Cursors]::Hand
-    $gear.Visible       = $false
+    $gear.Visible       = $true                  # 常驻可见（同上）
     $gear.Add_Click({ try { Show-Settings } catch { Dbg "设置窗口出错: $($_.Exception.Message)" } })
 
+    # ---------- 2026-10-05 新：右侧一排「看得见、点得动」的快捷按钮 ----------
+    # 放大缩小 / 透明度 / 关闭 是最常用的三件事，原来都得先进设置窗口找，
+    # 而设置入口本身又是隐形的。现在做成条子上直接可点的按钮。
+    function New-BarButton([string]$text) {
+        $b = New-Object System.Windows.Forms.Label
+        $b.Text = $text
+        $b.AutoSize = $false
+        $b.Size = New-Object Drawing.Size($script:GripSize, $script:GripSize)
+        $b.TextAlign = 'MiddleCenter'
+        $b.Font = New-Object Drawing.Font('微软雅黑', [float][Math]::Max(9, 10 * $script:Scale))
+        $b.BackColor = [Drawing.Color]::Transparent
+        $b.ForeColor = [Drawing.Color]::FromArgb(115, 255, 255, 255)
+        $b.Cursor = [System.Windows.Forms.Cursors]::Hand
+        $b.Visible = $true
+        return $b
+    }
+    $bClose = New-BarButton ([string][char]0x2715)                 # ✕ 隐藏字幕条
+    $bAlpha = New-BarButton ([string][char]0x25D0)                 # ◐ 透明度循环
+    $bUp    = New-BarButton '+'
+    $bDown  = New-BarButton ([string][char]0x2212)                 # − 缩小
+
+    $bUp.Add_Click({   try { Scale-Bar 1.08 }      catch { Dbg "放大失败: $($_.Exception.Message)" } })
+    $bDown.Add_Click({ try { Scale-Bar (1/1.08) }  catch { Dbg "缩小失败: $($_.Exception.Message)" } })
+    $bAlpha.Add_Click({
+        try {
+            $steps = @(0.95, 0.80, 0.62, 0.45, 0.30)
+            $cur = [double]$cfg.opacity
+            $idx = 0
+            for ($i = 0; $i -lt $steps.Count; $i++) { if ($steps[$i] -le $cur + 0.001) { $idx = $i } }
+            $idx = ($idx + 1) % $steps.Count
+            $cfg.opacity = $steps[$idx]
+            Apply-Bg
+            Save-Cfg
+            Dbg ("透明度 -> " + $cfg.opacity)
+        } catch { Dbg "透明度调整失败: $($_.Exception.Message)" }
+    })
+    $bClose.Add_Click({
+        try {
+            $form.Hide()
+            Dbg "字幕条已隐藏（托盘菜单可恢复）"
+        } catch { Dbg "隐藏失败: $($_.Exception.Message)" }
+    })
+
     function Update-HandlePos {
-        # 两个把手贴在右下角：⚙ 在左，◢ 在最右
+        # 右下角一排按钮，从右往左：◢缩放把手 ⚙设置 ✕隐藏 ◐透明度 +放大 −缩小
         $g = $script:GripSize
         $w = $form.ClientSize.Width
         $h = $form.ClientSize.Height
-        $grip.Location = New-Object Drawing.Point(($w - $g), ($h - $g))
-        $gear.Location = New-Object Drawing.Point([Math]::Max(0, $w - $g * 2 - 2), ($h - $g))
+        $y = $h - $g
+        $grip.Location   = New-Object Drawing.Point(($w - $g), $y)
+        $gear.Location   = New-Object Drawing.Point([Math]::Max(0, $w - $g * 2 - 2), $y)
+        $bClose.Location = New-Object Drawing.Point([Math]::Max(0, $w - $g * 3 - 4), $y)
+        $bAlpha.Location = New-Object Drawing.Point([Math]::Max(0, $w - $g * 4 - 6), $y)
+        $bUp.Location    = New-Object Drawing.Point([Math]::Max(0, $w - $g * 5 - 8), $y)
+        $bDown.Location  = New-Object Drawing.Point([Math]::Max(0, $w - $g * 6 - 10), $y)
     }
-    $form.Controls.Add($grip)
-    $form.Controls.Add($gear)
-    $grip.BringToFront()
-    $gear.BringToFront()
+    foreach ($b in @($grip, $gear, $bClose, $bAlpha, $bUp, $bDown)) { $form.Controls.Add($b); $b.BringToFront() }
     Update-HandlePos
 
     function Show-Handles([bool]$on) {
-        if ($on) {
-            $grip.Visible = $true
-            $gear.Visible = $true
-            $grip.BringToFront()
-            $gear.BringToFront()
-        } elseif (-not $script:GripActive) {
-            $grip.Visible = $false
-            $gear.Visible = $false
+        # 常驻显示 + 悬停高亮（2026-10-05 改）
+        foreach ($b in @($grip, $gear, $bClose, $bAlpha, $bUp, $bDown)) {
+            if ($on) {
+                $b.ForeColor = [Drawing.Color]::FromArgb(240,255,255,255)
+                $b.BackColor = [Drawing.Color]::FromArgb(85,255,255,255)
+            } else {
+                $b.ForeColor = [Drawing.Color]::FromArgb(115,255,255,255)
+                $b.BackColor = [Drawing.Color]::Transparent
+            }
+            $b.Visible = $true
+            $b.BringToFront()
         }
     }
     # 鼠标进条子 → 把手出现；离开 → 收起（不挡字幕，但永远找得到）
-    foreach ($c in @($form, $lblZh, $lblJa, $grip, $gear)) {
+    foreach ($c in @($form, $lblZh, $lblJa, $grip, $gear, $bClose, $bAlpha, $bUp, $bDown)) {
         $c.Add_MouseEnter({ Show-Handles $true })
         $c.Add_MouseLeave({ Show-Handles $false })
     }
@@ -506,6 +563,12 @@ public class Win32CS {
 
     # 按模式决定谁显示
     function Apply-Mode {
+        # 2026-10-05：关掉「实时翻译」时只显示原文那一行（主行直接承载原文）
+        if (-not [bool]$cfg.translateEnabled) {
+            $lblJa.Visible = $false
+            $lblZh.Visible = $true
+            return
+        }
         switch ("$($cfg.mode)") {
             'zhOnly' { $lblJa.Visible = $false; $lblZh.Visible = $true }
             'jaOnly' { $lblJa.Visible = $true;  $lblZh.Visible = $false }
@@ -535,10 +598,13 @@ public class Win32CS {
         $keepY = [int](60  * $script:Scale)
         $x = $form.Location.X
         $y = $form.Location.Y
-        if ($x -gt ($vs.Right  - $keepX)) { $x = $vs.Right  - $keepX }
-        if ($x -lt ($vs.Left   - $form.Width + $keepX)) { $x = $vs.Left - $form.Width + $keepX }
-        if ($y -gt ($vs.Bottom - $keepY)) { $y = $vs.Bottom - $keepY }
-        if ($y -lt $vs.Top) { $y = $vs.Top }
+        # 2026-10-05 改：原来只要求「留 120x60 在屏幕里」，条子可以大半跑到屏幕外——
+        # 而右下角那排按钮就跟着跑到屏幕外，用户看不见也点不到。现在整条夹在屏幕内。
+        $margin = [int](10 * $script:Scale)
+        if ($x -gt ($vs.Right  - $form.Width  - $margin)) { $x = $vs.Right  - $form.Width  - $margin }
+        if ($x -lt ($vs.Left + $margin))                  { $x = $vs.Left + $margin }
+        if ($y -gt ($vs.Bottom - $form.Height - $margin)) { $y = $vs.Bottom - $form.Height - $margin }
+        if ($y -lt ($vs.Top + $margin))                   { $y = $vs.Top + $margin }
         if ($x -ne $form.Location.X -or $y -ne $form.Location.Y) {
             $form.Location = New-Object Drawing.Point($x, $y)
             Dbg "位置超出屏幕，已拉回: $x,$y"
@@ -663,6 +729,28 @@ public class Win32CS {
     })
     Dbg "右下角把手拖拽绑定完成"
 
+    # 2026-10-05：把「整条缩放」抽成函数，滚轮与 +/− 按钮共用同一套上下限
+    function Scale-Bar([double]$step) {
+        $maxBarW = [int]([System.Windows.Forms.SystemInformation]::VirtualScreen.Width / $script:Scale) - 20
+        $newW  = [Math]::Max(400,  [Math]::Min($maxBarW, [int][Math]::Round([int]$cfg.width  * $step)))
+        $newH  = [Math]::Max(80,   [Math]::Min(800,  [int][Math]::Round([int]$cfg.height * $step)))
+        $newZh = [Math]::Max(14,   [Math]::Min(80,   [int][Math]::Round([int]$cfg.fontSizeZh * $step)))
+        $newJa = [Math]::Max(10,   [Math]::Min(50,   [int][Math]::Round([int]$cfg.fontSizeJa * $step)))
+        if ($newW -eq [int]$cfg.width -and $newH -eq [int]$cfg.height) { return }
+        $cfg.width = $newW; $cfg.height = $newH
+        $cfg.fontSizeZh = $newZh; $cfg.fontSizeJa = $newJa
+        $lblJa.Height = [int][Math]::Max(24, [Math]::Min(400, [double]$lblJa.Height * $step))
+        $lblZh.Font = New-Object Drawing.Font('微软雅黑', [float]$cfg.fontSizeZh, [Drawing.FontStyle]::Bold)
+        $lblJa.Font = New-Object Drawing.Font('微软雅黑', [float]$cfg.fontSizeJa)
+        try {
+            $form.Size = New-Object Drawing.Size([int]($cfg.width * $script:Scale), [int]($cfg.height * $script:Scale))
+            Set-RoundedRegion
+            Update-HandlePos
+            Clamp-Pos
+        } catch { Dbg "缩放失败: $($_.Exception.Message)" }
+        Save-Cfg
+    }
+
     # 滚轮（保留为快捷方式）：滚 = 整条放大缩小。
     # Ctrl+滚 那套已经删掉——它要求用户先知道、再记住组合键，新手根本发现不了；
     # 「只想调字号」现在去设置窗口的滑块里做，而且看得见当前值。
@@ -672,7 +760,8 @@ public class Win32CS {
 
         # —— 整条缩放：宽、高、两行字号按同一比例变 ——
         $step  = if ($up) { 1.08 } else { 1 / 1.08 }
-        $newW  = [Math]::Max(400,  [Math]::Min(3840, [int][Math]::Round([int]$cfg.width  * $step)))
+        $maxBarW = [int]([System.Windows.Forms.SystemInformation]::VirtualScreen.Width / $script:Scale) - 20
+        $newW  = [Math]::Max(400,  [Math]::Min($maxBarW, [int][Math]::Round([int]$cfg.width  * $step)))
         $newH  = [Math]::Max(80,   [Math]::Min(800,  [int][Math]::Round([int]$cfg.height * $step)))
         $newZh = [Math]::Max(14,   [Math]::Min(80,   [int][Math]::Round([int]$cfg.fontSizeZh * $step)))
         $newJa = [Math]::Max(10,   [Math]::Min(50,   [int][Math]::Round([int]$cfg.fontSizeJa * $step)))
@@ -743,6 +832,14 @@ public class Win32CS {
     })
 
     $null = $menu.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator))
+    $miQuick = $menu.Items.Add('🚀 快速设置（三步）')
+    $miQuick.Add_Click({ try { Show-QuickSetup } catch { Dbg "快速设置出错: $($_.Exception.Message)" } })
+    $miSet = $menu.Items.Add('⚙ 打开设置…')
+    $miSet.Add_Click({ try { Show-Settings } catch { Dbg "设置窗口出错: $($_.Exception.Message)" } })
+    $miShow = $menu.Items.Add('显示 / 隐藏字幕条')
+    $miShow.Add_Click({
+        if ($form.Visible) { $form.Hide() } else { $form.Show(); $form.BringToFront() }
+    })
     $miPause = $menu.Items.Add('暂停字幕')
     $miPause.Add_Click({ Set-Running (-not $script:Running) })
 
@@ -973,6 +1070,130 @@ public class Win32Icon {
         $dg.CancelButton = $bd
         Dbg '环境自检已打开'
         [void]$dg.ShowDialog($form)
+    }
+
+    # ---------- 2026-10-05 新：快速设置 · 三步向导 ----------
+    # 斯瑞要的形态：「点击去进行设置，选择识别语音 - 是否实时翻译 - 对应中文（默认开启）」
+    # 独立小窗，不改动原来那个大设置窗，风险最小；三步之间用大标题分隔，一眼知道先点哪。
+    function Show-QuickSetup {
+        $q = New-Object System.Windows.Forms.Form
+        $q.Text            = '快速设置 · 三步搞定'
+        $q.FormBorderStyle = 'FixedDialog'
+        $q.MaximizeBox     = $false
+        $q.MinimizeBox     = $false
+        $q.StartPosition   = 'CenterScreen'
+        $q.ClientSize      = New-Object Drawing.Size([int](560 * $script:Scale), [int](480 * $script:Scale))
+        $q.Font            = New-Object Drawing.Font('微软雅黑', [float](10 * $script:Scale))
+        $q.BackColor       = [Drawing.Color]::FromArgb(250, 250, 252)
+        $S = $script:Scale
+
+        function QT([string]$txt, [int]$yy, [bool]$bold) {
+            $l = New-Object System.Windows.Forms.Label
+            $l.Text = $txt
+            $l.Location = New-Object Drawing.Point([int](24 * $S), $yy)
+            $l.AutoSize = $true
+            if ($bold) {
+                $l.Font = New-Object Drawing.Font('微软雅黑', [float](12 * $S), [Drawing.FontStyle]::Bold)
+                $l.ForeColor = [Drawing.Color]::FromArgb(30, 90, 180)
+            } else {
+                $l.Font = New-Object Drawing.Font('微软雅黑', [float](10 * $S))
+                $l.ForeColor = [Drawing.Color]::FromArgb(70, 70, 70)
+            }
+            $q.Controls.Add($l)
+        }
+
+        $y = [int](18 * $S)
+        QT '第 1 步 · 听什么声音' $y $true; $y += [int](34 * $S)
+        QT '选一个能听到电脑声音的设备（一般选「立体声混音」）' $y $false; $y += [int](28 * $S)
+        $cbDev = New-Object System.Windows.Forms.ComboBox
+        $cbDev.DropDownStyle = 'DropDownList'
+        $cbDev.Location = New-Object Drawing.Point([int](28 * $S), $y)
+        $cbDev.Size = New-Object Drawing.Size([int](490 * $S), [int](30 * $S))
+        $devNames = @()
+        try { $devNames = @(Get-CaptureDevices) } catch { }
+        $devCount = if ($devNames.Count -gt 0) { $devNames.Count } else { 6 }
+        for ($i = 0; $i -lt $devCount; $i++) {
+            $nm = if ($i -lt $devNames.Count) { $devNames[$i] } else { '（未知设备）' }
+            [void]$cbDev.Items.Add(("{0} · {1}" -f $i, $nm))
+        }
+        $curDev = [int]$script:EffDevice
+        if ($curDev -lt 0 -or $curDev -ge $devCount) { $curDev = 0 }
+        $cbDev.SelectedIndex = $curDev
+        $q.Controls.Add($cbDev)
+        $y += [int](44 * $S)
+
+        QT '第 2 步 · 要不要边听边翻译' $y $true; $y += [int](34 * $S)
+        $ckTr = New-Object System.Windows.Forms.CheckBox
+        $ckTr.Text = '边听边翻译（关掉就只显示识别出来的原文）'
+        $ckTr.Checked = [bool]$cfg.translateEnabled
+        $ckTr.Location = New-Object Drawing.Point([int](28 * $S), $y)
+        $ckTr.AutoSize = $true
+        $q.Controls.Add($ckTr)
+        $y += [int](44 * $S)
+
+        QT '第 3 步 · 翻译成哪种语言（默认中文）' $y $true; $y += [int](34 * $S)
+        $cbTgt = New-Object System.Windows.Forms.ComboBox
+        $cbTgt.DropDownStyle = 'DropDownList'
+        $cbTgt.Location = New-Object Drawing.Point([int](28 * $S), $y)
+        $cbTgt.Size = New-Object Drawing.Size([int](250 * $S), [int](30 * $S))
+        foreach ($k in $script:TargetLangs.Keys) { [void]$cbTgt.Items.Add("$($script:TargetLangs[$k])|$k") }
+        $tgtCur = "$($cfg.targetLang)"
+        if (-not $script:TargetLangs.Contains($tgtCur)) { $tgtCur = 'zh' }
+        for ($i = 0; $i -lt $cbTgt.Items.Count; $i++) {
+            if ("$($cbTgt.Items[$i])" -like "*|$tgtCur") { $cbTgt.SelectedIndex = $i; break }
+        }
+        if ($cbTgt.SelectedIndex -lt 0) { $cbTgt.SelectedIndex = 0 }
+        $q.Controls.Add($cbTgt)
+        $y += [int](56 * $S)
+
+        $hint = New-Object System.Windows.Forms.Label
+        $hint.Text = '识别语言（日语 / 英语…）在「完整设置」里改；这个小窗只管最常用的三件事。'
+        $hint.Location = New-Object Drawing.Point([int](24 * $S), $y)
+        $hint.AutoSize = $true
+        $hint.ForeColor = [Drawing.Color]::FromArgb(135, 135, 135)
+        $q.Controls.Add($hint)
+        $y += [int](42 * $S)
+
+        $bOk = New-Object System.Windows.Forms.Button
+        $bOk.Text = '保存并开始'
+        $bOk.Location = New-Object Drawing.Point([int](28 * $S), $y)
+        $bOk.Size = New-Object Drawing.Size([int](200 * $S), [int](42 * $S))
+        $q.Controls.Add($bOk)
+        $bOpenAll = New-Object System.Windows.Forms.Button
+        $bOpenAll.Text = '打开完整设置'
+        $bOpenAll.Location = New-Object Drawing.Point([int](240 * $S), $y)
+        $bOpenAll.Size = New-Object Drawing.Size([int](160 * $S), [int](42 * $S))
+        $q.Controls.Add($bOpenAll)
+        $bNo = New-Object System.Windows.Forms.Button
+        $bNo.Text = '取消'
+        $bNo.Location = New-Object Drawing.Point([int](412 * $S), $y)
+        $bNo.Size = New-Object Drawing.Size([int](110 * $S), [int](42 * $S))
+        $q.Controls.Add($bNo)
+
+        $bOk.Add_Click({
+            try {
+                $sel = "$($cbDev.SelectedItem)"
+                if ($sel -match '^(\d+)') {
+                    $newDev = [int]$Matches[1]
+                    if ($newDev -ne [int]$cfg.captureDevice) {
+                        $cfg.captureDevice = $newDev
+                        $script:EffDevice  = $newDev
+                        Dbg "录音设备已改为 $newDev"
+                    }
+                }
+                $before = [bool]$cfg.translateEnabled
+                $cfg.translateEnabled = [bool]$ckTr.Checked
+                $ts = "$($cbTgt.SelectedItem)"
+                if ($ts -match '\|([a-z]{2})$') { $cfg.targetLang = $Matches[1] }
+                Apply-Mode
+                Save-Cfg
+                Dbg ("快速设置已保存: 设备=" + $cfg.captureDevice + " 翻译=" + $cfg.translateEnabled + " 目标=" + $cfg.targetLang)
+            } catch { Dbg "快速设置保存失败: $($_.Exception.Message)" }
+            $q.Close()
+        })
+        $bOpenAll.Add_Click({ $q.Close(); try { Show-Settings } catch { Dbg "设置窗口出错: $($_.Exception.Message)" } })
+        $bNo.Add_Click({ $q.Close() })
+        [void]$q.ShowDialog()
     }
 
     function Show-Settings {
@@ -1530,9 +1751,16 @@ public class Win32Icon {
         Dbg "新句子: $last"
         $script:Busy = $true
         try {
-            $zh = & $script:DoTranslate $last
-            if ($zh) { $lblZh.Text = $zh } else { $lblZh.Text = '（翻译未返回）' }
-            Dbg "译文: $zh"
+            if ([bool]$cfg.translateEnabled) {
+                $zh = & $script:DoTranslate $last
+                if ($zh) { $lblZh.Text = $zh } else { $lblZh.Text = '（翻译未返回）' }
+                Dbg "译文: $zh"
+            } else {
+                # 关掉翻译：不调接口，主行直接显示识别出的原文
+                $lblZh.Text = $last
+                $lblJa.Text = ''
+                Dbg "翻译已关闭，只显示原文"
+            }
         } finally { $script:Busy = $false }
     })
     $timer.Start()
