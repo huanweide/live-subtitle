@@ -89,6 +89,18 @@ $script:Themes = [ordered]@{
 }
 $script:ThemeKeys = @('classic', 'contrast', 'cinema', 'night')
 
+# ============ 翻译接口预设 ============
+# 设置窗口里那个「翻译接口」下拉框用这几套。要加就照抄一行。
+# ★ env 这一栏存的是「环境变量的名字」，不是密钥本身 ——
+#   配置文件会被截图、也可能误传到仓库；密钥留在系统环境变量里才泄露不了。别改成直接存 key。
+$script:Apis = [ordered]@{
+    'siliconflow' = @{ name = '硅基流动';    url = 'https://api.siliconflow.cn/v1/chat/completions'; model = 'Qwen/Qwen2.5-7B-Instruct'; env = 'SILICONFLOW_API_KEY' }
+    'openai'      = @{ name = 'OpenAI';      url = 'https://api.openai.com/v1/chat/completions';    model = 'gpt-4o-mini';             env = 'OPENAI_API_KEY' }
+    'ollama'      = @{ name = '本地 Ollama'; url = 'http://127.0.0.1:11434/v1/chat/completions';    model = 'qwen2.5:7b';              env = '' }
+    'custom'      = @{ name = '自定义';      url = '';                                                model = '';                        env = '' }
+}
+$script:ApiKeys = @('siliconflow', 'openai', 'ollama', 'custom')
+
 # ============ 幻觉黑名单 ============
 # whisper 对「静音」会自己编句子，最常见的编造内容就是视频片尾语。
 # 命中这些，一律不显示。列表按语言分组，加语言时往对应组里补。
@@ -172,6 +184,9 @@ public class Win32CS {
         captureDevice  = $CaptureDevice  # 录音设备编号；换电脑时装在这台机器上的值说了算
         modelPath      = "$ModelPath"    # 识别模型文件路径；同上
         whisperStream  = "$WhisperStream"  # 识别引擎路径；同上
+        apiUrl         = "$ApiUrl"         # 翻译接口地址；换别家模型服务时改这里（设置窗口里也能改）
+        translateModel = "$TranslateModel" # 翻译用的模型名
+        apiKeyEnv      = 'SILICONFLOW_API_KEY'  # 从哪个环境变量取密钥。★ 这里只存变量名，不存密钥本身
     }
     if (Test-Path $script:CfgPath) {
         $saved = Get-Content $script:CfgPath -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -198,7 +213,8 @@ public class Win32CS {
     Save-Cfg
 
     # ---------- 2. 取翻译密钥（不回显） ----------
-    $script:ApiKey = $env:SILICONFLOW_API_KEY
+    # 环境变量名从配置里来（默认 SILICONFLOW_API_KEY）。取不到会返回 $null，走下面的文件兜底。
+    $script:ApiKey = [Environment]::GetEnvironmentVariable("$($cfg.apiKeyEnv)")
     if (-not $script:ApiKey -and (Test-Path $ApiKeyFile)) {
         $m = [regex]::Match((Get-Content $ApiKeyFile -Raw), 'KEY\s*=\s*"([^"]+)"')
         if ($m.Success) { $script:ApiKey = $m.Groups[1].Value }
@@ -220,14 +236,14 @@ public class Win32CS {
         }
         $prompt = $ask + "`n" + $text
         $body = @{
-            model       = $TranslateModel
+            model       = "$($cfg.translateModel)"
             messages    = @(@{ role = 'user'; content = $prompt })
             max_tokens  = 300
             temperature = 0.1
             stream      = $false
         } | ConvertTo-Json -Depth 6 -Compress
         try {
-            $r = Invoke-RestMethod -Uri $ApiUrl -Method Post `
+            $r = Invoke-RestMethod -Uri "$($cfg.apiUrl)" -Method Post `
                  -Headers @{ Authorization = "Bearer $($script:ApiKey)" } `
                  -ContentType 'application/json; charset=utf-8' `
                  -Body ([Text.Encoding]::UTF8.GetBytes($body)) -TimeoutSec 25
@@ -660,7 +676,7 @@ public class Win32Icon {
     function Show-Settings {
         $dlg = New-Object System.Windows.Forms.Form
         $dlg.Text            = '实时字幕 · 设置'
-        $dlg.ClientSize      = New-Object Drawing.Size(520, 476)
+        $dlg.ClientSize      = New-Object Drawing.Size(520, 598)
         $dlg.StartPosition   = 'CenterScreen'
         $dlg.TopMost         = $true
         $dlg.FormBorderStyle = 'FixedDialog'
@@ -811,6 +827,54 @@ public class Win32Icon {
         $dlg.Controls.Add($lbThemeTip)
         $ly += 46
 
+        # 翻译接口：选预设会自动把下面的地址和变量名填好；换完点「应用并保存」才真的换。
+        $lbApi = New-Object System.Windows.Forms.Label
+        $lbApi.Text = '翻译接口'; $lbApi.Location = New-Object Drawing.Point(20, ($ly+5)); $lbApi.Size = New-Object Drawing.Size(90,24)
+        $dlg.Controls.Add($lbApi)
+        $cbApi = New-Object System.Windows.Forms.ComboBox
+        $cbApi.DropDownStyle = 'DropDownList'
+        $cbApi.Location = New-Object Drawing.Point(120, $ly); $cbApi.Size = New-Object Drawing.Size(150,28)
+        $allApiKeys = @($script:ApiKeys)
+        foreach ($ak in @($script:ApiKeys)) { [void]$cbApi.Items.Add("$($script:Apis[$ak].name)|$ak") }
+        # 当前地址跟哪个预设一样就选哪个，对不上就是「自定义」
+        $curApi = 'custom'
+        foreach ($ak in @($script:ApiKeys)) {
+            $aa = $script:Apis[$ak]
+            if ("$($cfg.apiUrl)" -eq "$($aa.url)" -and "$($aa.url)" -ne '') { $curApi = $ak; break }
+        }
+        $cbApi.SelectedIndex = [array]::IndexOf($allApiKeys, $curApi)
+        if ($cbApi.SelectedIndex -lt 0) { $cbApi.SelectedIndex = $script:ApiKeys.Count - 1 }
+        $dlg.Controls.Add($cbApi)
+        $lbApiTip = New-Object System.Windows.Forms.Label
+        $lbApiTip.Text = '（换完点「应用并保存」）'
+        $lbApiTip.Location = New-Object Drawing.Point(280, ($ly+5)); $lbApiTip.Size = New-Object Drawing.Size(230,24)
+        $lbApiTip.ForeColor = [Drawing.Color]::Gray
+        $dlg.Controls.Add($lbApiTip)
+        $ly += 46
+
+        # 密钥变量名 + 接口地址：都能手填，方便接自己的服务
+        $lbKey = New-Object System.Windows.Forms.Label
+        $lbKey.Text = '密钥变量名'; $lbKey.Location = New-Object Drawing.Point(20, ($ly+5)); $lbKey.Size = New-Object Drawing.Size(90,24)
+        $dlg.Controls.Add($lbKey)
+        $tbKey = New-Object System.Windows.Forms.TextBox
+        $tbKey.Text = "$($cfg.apiKeyEnv)"
+        $tbKey.Location = New-Object Drawing.Point(120, $ly); $tbKey.Size = New-Object Drawing.Size(150,28)
+        $dlg.Controls.Add($tbKey)
+        $lbUrl = New-Object System.Windows.Forms.Label
+        $lbUrl.Text = '接口地址'; $lbUrl.Location = New-Object Drawing.Point(285, ($ly+5)); $lbUrl.Size = New-Object Drawing.Size(70,24)
+        $dlg.Controls.Add($lbUrl)
+        $tbUrl = New-Object System.Windows.Forms.TextBox
+        $tbUrl.Text = "$($cfg.apiUrl)"
+        $tbUrl.Location = New-Object Drawing.Point(355, $ly); $tbUrl.Size = New-Object Drawing.Size(155,28)
+        $dlg.Controls.Add($tbUrl)
+        $ly += 46
+        $lbKeyNote = New-Object System.Windows.Forms.Label
+        $lbKeyNote.Text = '密钥本身不写进配置文件，只写「从哪个环境变量取」——这样配置文件泄露也不会丢密钥。'
+        $lbKeyNote.Location = New-Object Drawing.Point(20, ($ly+2)); $lbKeyNote.Size = New-Object Drawing.Size(490,22)
+        $lbKeyNote.ForeColor = [Drawing.Color]::Gray
+        $dlg.Controls.Add($lbKeyNote)
+        $ly += 30
+
         $ck1 = New-Object System.Windows.Forms.CheckBox
         $ck1.Text = '鼠标点不到字幕条（看片时开；开了它就拖不动）'
         $ck1.Location = New-Object Drawing.Point(20, $ly); $ck1.Size = New-Object Drawing.Size(470,26)
@@ -846,6 +910,9 @@ public class Win32Icon {
         $snapBg      = "$($cfg.bgColor)"
         $snapZhC     = "$($cfg.zhColor)"
         $snapJaC     = "$($cfg.jaColor)"
+        $snapApiUrl  = "$($cfg.apiUrl)"
+        $snapApiEnv  = "$($cfg.apiKeyEnv)"
+        $snapApiMdl  = "$($cfg.translateModel)"
 
         $n1.Add_ValueChanged({
             $lblZh.Font = New-Object Drawing.Font('微软雅黑', [float]$n1.Value, [Drawing.FontStyle]::Bold)
@@ -894,6 +961,15 @@ public class Win32Icon {
             Apply-Bg
             Dbg "主题预览: $($tt.name)"
         })
+        # 翻译接口：选了预设就把地址和变量名填进去（还没保存，点「应用并保存」才算数）
+        $cbApi.Add_SelectedIndexChanged({
+            $ak = ("$($cbApi.SelectedItem)" -split '\|')[-1]
+            if ($ak -eq 'custom' -or -not $script:Apis.Contains($ak)) { return }
+            $aa = $script:Apis[$ak]
+            $tbUrl.Text = "$($aa.url)"
+            $tbKey.Text = "$($aa.env)"
+            Dbg "翻译接口预览: $($aa.name)"
+        })
 
         $btnOk.Add_Click({
             $cfg.fontSizeZh  = [int]$n1.Value
@@ -906,6 +982,20 @@ public class Win32Icon {
             elseif ($r3.Checked) { $cfg.mode = 'jaOnly' }
             else { $cfg.mode = 'both'; $cfg.showJapanese = $true }
             Set-ClickThrough ([bool]$ck1.Checked)
+
+            # 翻译接口：地址和变量名以输入框为准；模型名跟着预设走（选「自定义」就保持原样）
+            $cfg.apiUrl    = "$($tbUrl.Text)".Trim()
+            $cfg.apiKeyEnv = "$($tbKey.Text)".Trim()
+            $akSel = ("$($cbApi.SelectedItem)" -split '\|')[-1]
+            if ($script:Apis.Contains($akSel)) {
+                $aaSel = $script:Apis[$akSel]
+                if ("$($aaSel.model)" -ne '') { $cfg.translateModel = "$($aaSel.model)" }
+            }
+            # 换接口后立刻按新变量名再取一次密钥 —— 不然得重启程序才生效
+            $newKey = [Environment]::GetEnvironmentVariable("$($cfg.apiKeyEnv)")
+            if ($newKey) { $script:ApiKey = $newKey; $script:HasApi = $true }
+            Dbg "翻译接口 -> $($cfg.apiUrl) / 变量 $($cfg.apiKeyEnv) / 模型 $($cfg.translateModel) / 密钥就绪 $($script:HasApi)"
+
             Apply-Bg
             $lblZh.Font = New-Object Drawing.Font('微软雅黑', [float]$cfg.fontSizeZh, [Drawing.FontStyle]::Bold)
             $lblJa.Font = New-Object Drawing.Font('微软雅黑', [float]$cfg.fontSizeJa)
@@ -962,6 +1052,10 @@ public class Win32Icon {
             $script:LiveColor = [Drawing.ColorTranslator]::FromHtml($snapZhC)
             $lblJa.ForeColor  = [Drawing.ColorTranslator]::FromHtml($snapJaC)
             if ($lblZh.Text -ne $script:IdleText) { $lblZh.ForeColor = $script:LiveColor }
+            # 翻译接口那两行也可能被点过，一起退回原样
+            $cfg.apiUrl         = $snapApiUrl
+            $cfg.apiKeyEnv      = $snapApiEnv
+            $cfg.translateModel = $snapApiMdl
             try {
                 $form.Size = New-Object Drawing.Size([int]($snapW * $script:Scale), [int]($snapH * $script:Scale))
                 Set-RoundedRegion
@@ -978,7 +1072,7 @@ public class Win32Icon {
         # 字是点单位会自己变大、框还是老尺寸 —— 于是字挤在框里、行距发紧。
         # 显示前统一乘一遍，最省事也最不容易漏。
         if ($script:Scale -ne 1.0) {
-            $dlg.ClientSize = New-Object Drawing.Size([int](520 * $script:Scale), [int](476 * $script:Scale))
+            $dlg.ClientSize = New-Object Drawing.Size([int](520 * $script:Scale), [int](598 * $script:Scale))
             foreach ($c in @($dlg.Controls)) {
                 $c.Location = New-Object Drawing.Point([int]($c.Location.X * $script:Scale), [int]($c.Location.Y * $script:Scale))
                 $c.Size     = New-Object Drawing.Size([int]($c.Size.Width * $script:Scale), [int]($c.Size.Height * $script:Scale))
