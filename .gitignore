@@ -25,6 +25,7 @@ wt-err.log
 
 # ===== 私人配置（含密钥，绝不外传）=====
 subtitle-config.json
+subtitle-glossary.json
 .siliconflow.key
 .env
 
