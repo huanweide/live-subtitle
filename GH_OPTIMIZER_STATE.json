@@ -29,17 +29,20 @@
     "untouched": ["setup.ps1", "识别/抓声音/UI/安装/翻译接口"]
   },
   "self_check": {
-    "syntax": "4/4 OK",
-    "bom": "4/4 带 BOM",
+    "syntax": "5/5 OK",
+    "bom": "5/5 带 BOM",
     "unit_tests": "38/38 通过",
-    "ci_yaml": "OK",
-    "mutation_tests": "4/4 被拦截，基线全绿"
+    "workflow_ascii": "ci.yml 的 run 段纯 ASCII",
+    "ci_on_runner": "第一轮真红（内联中文乱码），重构后转绿",
+    "mutation_tests": "5/5 被拦截，基线全绿"
   },
   "known_mistakes": [
     "引用检查初版只查文件名字符串，是假检查（已改为查真正的 dot-source 语句）",
     "辅助脚本自身无 BOM 导致 PS5.1 解析失败（已固化 BOM 检查进 CI）",
     "变异测试脚本未跳出目录导致副本删不掉、结果污染",
-    "凭据扫描会命中工作流自身规则文本（已排除 .github）"
+    "凭据扫描会命中工作流自身规则文本（已排除 .github）",
+    "【最重】CI 在真实 runner 上第一轮就红了：ci.yml 的 run 内联中文被 runner 写成无 BOM 临时 .ps1，PS5.1 按 GBK 解码成乱码直接 ParseException。本地永远发现不了，因为本地不走这条路径。已把所有逻辑抽到 tools/ci-checks.ps1（带 BOM），run 段保持纯 ASCII，并新增第 3 项元检查把这条规则固化进门禁",
+    "变异测试第一版注入的字符串在源码里根本不存在（return $out），导致「未被拦截」是假阴性 —— 变异前必须 assert 锚点命中，否则以为门禁失灵其实是自己没变异成功"
   ],
   "rollback": "squash 单 commit，一条 git revert 即可整体撤销",
   "next_round_suggestions": [
