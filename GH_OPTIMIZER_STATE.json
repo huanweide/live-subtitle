@@ -1,0 +1,56 @@
+{
+  "repo": "huanweide/live-subtitle",
+  "owner": "huanweide",
+  "round": 1,
+  "last_run": "2026-10-06",
+  "baseline_commit": "883194b",
+  "verdict": "keep",
+  "direction": "单点深度特化（字幕文本处理）",
+  "decision_reason": "竞品 LiveCaptions-Translator 3811 star 碾压，硬拼通用字幕必死；但 whisper 输出到可读字幕之间的文本处理是所有竞品都在凑合的环节。真稀缺资产是本地识别+可定制字幕条+不挑硬件。",
+  "survival_check": {
+    "competitors": [
+      { "name": "SakiRinn/LiveCaptions-Translator", "stars": 3811 },
+      { "name": "abb128/LiveCaptions", "stars": 1797 },
+      { "name": "Vanyoo/realtime-subtitle", "stars": 223 }
+    ],
+    "key_finding": "README 原主张「系统实时字幕没有日语语音包」已过时：Win11 22H2+ 已支持日语识别；但实时翻简体中文仅限 Copilot+ PC（NPU>=40TOPS + 24H2），普通 PC 只能翻英文，Win10 用不了。已据实改写 README。"
+  },
+  "changes": {
+    "added": [
+      "lib/SubtitleText.ps1（四个纯函数：剥时间戳/幻觉过滤/断句/术语替换）",
+      "tests/Invoke-SubtitleTests.ps1（零依赖测试，38 断言）",
+      "subtitle-glossary.example.json",
+      ".github/workflows/ci.yml"
+    ],
+    "modified": [
+      "实时字幕.ps1（dot-source 函数库 + 三项配置 + 队列与 Show-Subtitle + 新流水线）",
+      "README.md（修正过时声明 + 新增 Windows 现状对照 + 文档新功能）"
+    ],
+    "untouched": ["setup.ps1", "识别/抓声音/UI/安装/翻译接口"]
+  },
+  "self_check": {
+    "syntax": "5/5 OK",
+    "bom": "5/5 带 BOM",
+    "unit_tests": "38/38 通过",
+    "workflow_ascii": "ci.yml 的 run 段纯 ASCII",
+    "ci_on_runner": "第一轮真红（内联中文乱码），重构后转绿",
+    "mutation_tests": "5/5 被拦截，基线全绿"
+  },
+  "known_mistakes": [
+    "引用检查初版只查文件名字符串，是假检查（已改为查真正的 dot-source 语句）",
+    "辅助脚本自身无 BOM 导致 PS5.1 解析失败（已固化 BOM 检查进 CI）",
+    "变异测试脚本未跳出目录导致副本删不掉、结果污染",
+    "凭据扫描会命中工作流自身规则文本（已排除 .github）",
+    "【最重】CI 在真实 runner 上第一轮就红了：ci.yml 的 run 内联中文被 runner 写成无 BOM 临时 .ps1，PS5.1 按 GBK 解码成乱码直接 ParseException。本地永远发现不了，因为本地不走这条路径。已把所有逻辑抽到 tools/ci-checks.ps1（带 BOM），run 段保持纯 ASCII，并新增第 3 项元检查把这条规则固化进门禁",
+    "变异测试第一版注入的字符串在源码里根本不存在（return $out），导致「未被拦截」是假阴性 —— 变异前必须 assert 锚点命中，否则以为门禁失灵其实是自己没变异成功"
+  ],
+  "rollback": "squash 单 commit，一条 git revert 即可整体撤销",
+  "next_round_suggestions": [
+    "拆分 1839 行的实时字幕.ps1（窗口/托盘/设置/定时器）",
+    "给 setup.ps1 拆纯函数并加测试",
+    "字幕历史导出 .srt",
+    "完全离线翻译",
+    "术语表界面化编辑"
+  ],
+  "next_repo_candidates": ["待评估"]
+}

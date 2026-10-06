@@ -1,0 +1,38 @@
+name: CI
+
+# IMPORTANT: every "run:" block in this file MUST stay pure ASCII.
+#
+# Why: GitHub's Windows runner writes the run: block into a temp .ps1 file and
+# hands it to Windows PowerShell 5.1, and that temp file has NO UTF-8 BOM.
+# PS 5.1 then decodes it with the system codepage (GBK on a Chinese image), so
+# any inline Chinese turns into mojibake and dies with a ParseException.
+#
+# All real logic therefore lives in tools/ci-checks.ps1 (UTF-8 WITH BOM) and is
+# invoked with -File. The ASCII rule is enforced by check #3 inside that script.
+#
+# We deliberately use PS 5.1 rather than pwsh 7: users run 5.1, and "it passed on
+# 7" does not mean it passes on 5.1 (the BOM issue is 5.1-only).
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Verify
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Run all checks
+        shell: powershell
+        run: |
+          powershell -NoProfile -ExecutionPolicy Bypass -File tools/ci-checks.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

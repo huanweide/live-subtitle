@@ -30,6 +30,21 @@ $script:Root    = Split-Path -Parent $MyInvocation.MyCommand.Path
 $script:DbgPath = Join-Path $script:Root 'debug.log'
 Remove-Item $script:DbgPath -ErrorAction SilentlyContinue
 
+# 字幕文本处理（清洗 / 幻觉 / 断句 / 术语）单独放在 lib\SubtitleText.ps1：
+# 那边全是纯函数，能被 tests\Invoke-SubtitleTests.ps1 单独加载做单元测试；
+# 本脚本一执行就建窗口，本身没法被测试直接调用，所以拆开。
+$script:LibPath = Join-Path $script:Root 'lib\SubtitleText.ps1'
+if (Test-Path $script:LibPath) {
+    . $script:LibPath
+} else {
+    # 少了这个文件不该闷声失败（程序是隐藏窗口跑的，用户什么都看不到）
+    Add-Type -AssemblyName System.Windows.Forms
+    [void][System.Windows.Forms.MessageBox]::Show(
+        "缺少 lib\SubtitleText.ps1`n`n它是字幕文本处理模块，和主脚本一起分发的。`n请重新下载完整项目，或把这个文件放回 lib\ 目录。",
+        "实时字幕")
+    exit
+}
+
 # 默认路径按「脚本自己所在目录」算 —— 不写死任何人的盘符和用户名。
 # 有独显的机器 setup.ps1 把引擎装在 whispercpp-gpu\，没独显的装在 whispercpp\，
 # 所以两个位置都记下来，后面哪个存在就用哪个。
@@ -144,14 +159,9 @@ $script:Hallucinations = @(
     '字幕', '字幕由 Amara.org 社群提供', '请不吝点赞订阅转发打赏支持明镜与点点栏目'
 )
 function Test-Hallucination([string]$t) {
-    if ([string]::IsNullOrWhiteSpace($t)) { return $true }
-    $s = ($t -replace '[\s。、！？!?.,，．…]', '')
-    if ($s.Length -eq 0) { return $true }
-    foreach ($h in $script:Hallucinations) {
-        # 两边都去掉空格和标点再比 —— 否则 'Thank you for watching' 这种带空格的永远命中不了
-        if ($s -eq ($h -replace '[\s。、！？!?.,，．…]', '')) { return $true }
-    }
-    return $false
+    # 实现搬到了 lib\SubtitleText.ps1 的 Test-SubtitleHallucination：那边是纯函数，
+    # 能脱离 UI 被单元测试覆盖。这里保留旧名字，转发过去，行为不变。
+    return (Test-SubtitleHallucination -Text $t -Blacklist $script:Hallucinations)
 }
 
 # 单例：已经在跑就不再开第二个
@@ -216,6 +226,9 @@ public class Win32CS {
         translateModel = "$TranslateModel" # 翻译用的模型名
         apiKeyEnv      = 'SILICONFLOW_API_KEY'  # 从哪个环境变量取密钥。★ 这里只存变量名，不存密钥本身
         hotkeyEnabled  = $true   # 全局热键 Ctrl+Alt+Z 开关。嫌组合键难记就在设置里关掉，其它功能不受影响
+        splitEnabled   = $true   # 长句断句开关。 whisper 一口气吐一整段时切成几条依次显示
+        maxLineChars   = 42      # 单条字幕最多几个字；中文/日文按字算，西文按字符算
+        splitMinSeconds = 1.2    # 断句后每条至少停这么久再换下一条，免得一闪而过
     }
     if (Test-Path $script:CfgPath) {
         $saved = Get-Content $script:CfgPath -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -228,6 +241,26 @@ public class Win32CS {
     $script:EffLang = "$($cfg.sourceLang)"
     if (-not $script:LangNames.Contains($script:EffLang)) { $script:EffLang = 'ja' }
     Dbg "配置读取完成，识别语言=$($script:EffLang)"
+
+    # ---- 术语表（可选）----
+    # subtitle-glossary.json 里写 {"原名": "想让它显示成什么"}，用来纠正专有名词被译错。
+    # 长词优先匹配（见 ConvertFrom-SubtitleGlossary），不会互相污染。
+    # 文件不存在就当没配，其余功能不受影响。
+    $script:Glossary     = @{}
+    $script:GlossaryPath = Join-Path $script:Root 'subtitle-glossary.json'
+    if (Test-Path $script:GlossaryPath) {
+        try {
+            $gj = Get-Content $script:GlossaryPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            if ($gj) {
+                foreach ($p in $gj.PSObject.Properties) {
+                    if ("$($p.Name)" -ne '' -and "$($p.Value)" -ne '') {
+                        $script:Glossary["$($p.Name)"] = "$($p.Value)"
+                    }
+                }
+            }
+            Dbg "术语表已载入 $($script:Glossary.Count) 条"
+        } catch { Dbg "术语表读取失败，忽略: $($_.Exception.Message)" }
+    }
     # 生效设备与模型：配置文件里写了就用它，没写就用启动参数里的默认值
     # （setup.ps1 装到别的电脑上时只写配置文件，不动源码）
     $script:EffDevice = if ($null -ne $cfg.captureDevice -and [int]$cfg.captureDevice -ge 0) { [int]$cfg.captureDevice } else { [int]$CaptureDevice }
@@ -1706,6 +1739,32 @@ public class Win32Icon {
     $script:TestLines = if ("$($script:EffLang)" -eq 'en') { $script:TestLinesEn } else { $script:TestLinesJa }
     $script:TestIdx = 0
 
+    # 断句后的待播队列。只有长句被切开时里面才会有多条；
+    # 普通短句「入队即出队」，显示节奏和没有断句时完全一样。
+    $script:Queue = New-Object System.Collections.Queue
+
+    # 把一句字幕显示出来（原文行 + 可选翻译）。抽成函数是因为断句后
+    # 「队列里取出下一句」和「文件里读到新句」两条路径都要走同一套显示逻辑。
+    function Show-Subtitle([string]$text) {
+        $script:LastNewTime = Get-Date
+        $lblJa.Text = $text
+        $lblZh.ForeColor = $script:LiveColor
+        Dbg "新句子: $text"
+        $script:Busy = $true
+        try {
+            if ([bool]$cfg.translateEnabled) {
+                $zh = & $script:DoTranslate $text
+                if ($zh) { $lblZh.Text = $zh } else { $lblZh.Text = '（翻译未返回）' }
+                Dbg "译文: $zh"
+            } else {
+                # 关掉翻译：不调接口，主行直接显示识别出的原文
+                $lblZh.Text = $text
+                $lblJa.Text = ''
+                Dbg "翻译已关闭，只显示原文"
+            }
+        } finally { $script:Busy = $false }
+    }
+
     $timer           = New-Object System.Windows.Forms.Timer
     $timer.Interval  = 800
     $timer.Add_Tick({
@@ -1718,6 +1777,15 @@ public class Win32Icon {
         }
 
         if ($script:Busy) { return }
+
+        # ---- 队列里还有断句切出来的下一句：停够最短时间再放出来 ----
+        if ($script:Queue.Count -gt 0) {
+            if (((Get-Date) - $script:LastNewTime).TotalSeconds -lt [double]$cfg.splitMinSeconds) { return }
+            $pending = [string]$script:Queue.Dequeue()
+            if ($pending -eq '') { return }
+            Show-Subtitle $pending
+            return
+        }
 
         # ---- 取新句 ----
         $last = ''
@@ -1733,35 +1801,40 @@ public class Win32Icon {
             if (-not $lines) { return }
             $last = ($lines | Where-Object { $_.Trim() -ne '' } | Select-Object -Last 1)
             if (-not $last) { return }
-            $last = $last.Trim()
+
+            # 先剥掉时间戳再去重。whisper-stream 每行都带 [起始 --> 结束]，
+            # 时间戳每 2 秒都在变，不剥的话「和上一句相同就跳过」永远不命中：
+            # 同一句话会被反复送去翻译 —— 重复花钱，字幕还一直闪。
+            $last = Get-CleanSubtitleText $last
+            if ($last -eq '') { return }
             if ($last -eq $script:LastLine) { return }
             $script:LastLine = $last
         }
         if (-not $last) { return }
 
         # ---- 幻觉过滤：静音时 whisper 会自己编片尾语，丢掉 ----
-        if (Test-Hallucination $last) {
+        if (Test-SubtitleHallucination -Text $last -Blacklist $script:Hallucinations) {
             Dbg "丢弃（幻觉/空白）: $last"
             return
         }
 
-        $script:LastNewTime = Get-Date
-        $lblJa.Text = $last
-        $lblZh.ForeColor = $script:LiveColor
-        Dbg "新句子: $last"
-        $script:Busy = $true
-        try {
-            if ([bool]$cfg.translateEnabled) {
-                $zh = & $script:DoTranslate $last
-                if ($zh) { $lblZh.Text = $zh } else { $lblZh.Text = '（翻译未返回）' }
-                Dbg "译文: $zh"
-            } else {
-                # 关掉翻译：不调接口，主行直接显示识别出的原文
-                $lblZh.Text = $last
-                $lblJa.Text = ''
-                Dbg "翻译已关闭，只显示原文"
+        # ---- 术语替换：专有名词被译错时，靠 glossary 纠正 ----
+        $last = ConvertFrom-SubtitleGlossary -Text $last -Glossary $script:Glossary
+
+        # ---- 断句：一整段太长就切成几条，进队列依次显示 ----
+        $script:Queue.Clear()
+        if ([bool]$cfg.splitEnabled) {
+            $maxChars = 42
+            if ($null -ne $cfg.maxLineChars -and [int]$cfg.maxLineChars -gt 8) { $maxChars = [int]$cfg.maxLineChars }
+            foreach ($s in (Split-SubtitleLine -Text $last -Lang "$($script:EffLang)" -MaxChars $maxChars)) {
+                if ("$s" -ne '') { $script:Queue.Enqueue([string]$s) }
             }
-        } finally { $script:Busy = $false }
+        }
+        if ($script:Queue.Count -eq 0) { $script:Queue.Enqueue([string]$last) }
+        # 识别快于播放时别让队列越积越长，只留最新的几条
+        while ($script:Queue.Count -gt 8) { [void]$script:Queue.Dequeue() }
+
+        Show-Subtitle ([string]$script:Queue.Dequeue())
     })
     $timer.Start()
     Dbg "定时器已启动"
