@@ -24,6 +24,13 @@
 
 ---
 
+> **📦 便携性速览**
+>
+> - Windows 10/11 桌面工具，PowerShell 一键 `setup.ps1` 装好引擎与模型。
+> - **语音识别 100% 本地跑**（whisper.cpp，可选 GPU 加速），声音不外传；翻译才调你自己的接口（可换硅基流动 / OpenAI / Ollama）。
+> - 不用装 Python；主脚本约 35 KB，识别模型首次下载约 1.5 GB。
+
+
 ## 它解决什么问题
 
 想在电脑上看外语影片、直播、网课，但听不懂，也不想等字幕组。
@@ -432,3 +439,12 @@ MIT License —— 随便用、随便改，出事别找我。
 - 翻译接口：默认[硅基流动](https://cloud.siliconflow.cn/i/axOmWfWi)，密钥自备
 
 **本项目不含任何影片内容，也不提供影片下载。**
+---
+
+## 🧰 更多开源工具（by ReTri · 樊斯瑞）
+
+- 🎬 字幕 / 视频：[bili-subtitle-universal](https://github.com/huanweide/bili-subtitle-universal) · [live-subtitle](https://github.com/huanweide/live-subtitle) · [zhihuishu-helper](https://github.com/huanweide/zhihuishu-helper) · [video-brief](https://github.com/huanweide/video-brief)
+- 🩺 代码健康全家桶（18 轴零依赖 CLI）：[family-showcase](https://github.com/huanweide/family-showcase)
+- 🔧 命令行利器：[idiot-index](https://github.com/huanweide/idiot-index) · [recall-cli](https://github.com/huanweide/recall-cli) · [forge-safeguard](https://github.com/huanweide/forge-safeguard-20260812)
+- 🖥️ 桌面 / 资讯：[floatsnip](https://github.com/huanweide/floatsnip) · [tech-news-hub](https://github.com/huanweide/tech-news-hub)
+- 📦 全部仓库：<https://github.com/huanweide?tab=repositories>
