@@ -443,6 +443,7 @@ MIT License —— 随便用、随便改，出事别找我。
 
 ## 🧰 更多开源工具（by ReTri · 樊斯瑞）
 
+- 📚 长篇创作（AI 小说工坊，零门槛试用）：[novel-smith](https://github.com/huanweide/novel-smith)
 - 🎬 字幕 / 视频：[bili-subtitle-universal](https://github.com/huanweide/bili-subtitle-universal) · [live-subtitle](https://github.com/huanweide/live-subtitle) · [zhihuishu-helper](https://github.com/huanweide/zhihuishu-helper) · [video-brief](https://github.com/huanweide/video-brief)
 - 🩺 代码健康全家桶（18 轴零依赖 CLI）：[family-showcase](https://github.com/huanweide/family-showcase)
 - 🔧 命令行利器：[idiot-index](https://github.com/huanweide/idiot-index) · [recall-cli](https://github.com/huanweide/recall-cli) · [forge-safeguard](https://github.com/huanweide/forge-safeguard-20260812)
