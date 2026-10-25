@@ -1,7 +1,7 @@
 {
   "repo": "huanweide/live-subtitle",
   "owner": "huanweide",
-  "round": 1,
+  "round": 2,
   "last_run": "2026-10-06",
   "baseline_commit": "883194b",
   "verdict": "keep",
@@ -9,9 +9,18 @@
   "decision_reason": "竞品 LiveCaptions-Translator 3811 star 碾压，硬拼通用字幕必死；但 whisper 输出到可读字幕之间的文本处理是所有竞品都在凑合的环节。真稀缺资产是本地识别+可定制字幕条+不挑硬件。",
   "survival_check": {
     "competitors": [
-      { "name": "SakiRinn/LiveCaptions-Translator", "stars": 3811 },
-      { "name": "abb128/LiveCaptions", "stars": 1797 },
-      { "name": "Vanyoo/realtime-subtitle", "stars": 223 }
+      {
+        "name": "SakiRinn/LiveCaptions-Translator",
+        "stars": 3811
+      },
+      {
+        "name": "abb128/LiveCaptions",
+        "stars": 1797
+      },
+      {
+        "name": "Vanyoo/realtime-subtitle",
+        "stars": 223
+      }
     ],
     "key_finding": "README 原主张「系统实时字幕没有日语语音包」已过时：Win11 22H2+ 已支持日语识别；但实时翻简体中文仅限 Copilot+ PC（NPU>=40TOPS + 24H2），普通 PC 只能翻英文，Win10 用不了。已据实改写 README。"
   },
@@ -26,7 +35,10 @@
       "实时字幕.ps1（dot-source 函数库 + 三项配置 + 队列与 Show-Subtitle + 新流水线）",
       "README.md（修正过时声明 + 新增 Windows 现状对照 + 文档新功能）"
     ],
-    "untouched": ["setup.ps1", "识别/抓声音/UI/安装/翻译接口"]
+    "untouched": [
+      "setup.ps1",
+      "识别/抓声音/UI/安装/翻译接口"
+    ]
   },
   "self_check": {
     "syntax": "5/5 OK",
@@ -52,5 +64,12 @@
     "完全离线翻译",
     "术语表界面化编辑"
   ],
-  "next_repo_candidates": ["待评估"]
+  "next_repo_candidates": [
+    "待评估"
+  ],
+  "lastOptimized": "2026-10-25",
+  "status": "no-improvements",
+  "engineNotes": [
+    "2026-10-25 引擎复检：描述/topics/README 导流段均已达标，无改动(no-improvements)"
+  ]
 }
