@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="320" viewBox="0 0 1280 320" role="img" aria-label="live-subtitle">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#071018"/>
+      <stop offset="0.55" stop-color="#0c2033"/>
+      <stop offset="1" stop-color="#050a10"/>
+    </linearGradient>
+    <linearGradient id="ring" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0078D6"/>
+      <stop offset="1" stop-color="#4ecca3"/>
+    </linearGradient>
+  </defs>
+  <rect width="1280" height="320" fill="url(#bg)"/>
+  <g transform="translate(150,160)">
+    <rect x="-76" y="-56" width="152" height="112" rx="18" fill="none" stroke="url(#ring)" stroke-width="12"/>
+    <rect x="-44" y="-18" width="10" height="36" rx="5" fill="#0078D6"/>
+    <rect x="-24" y="-34" width="10" height="68" rx="5" fill="#4ecca3"/>
+    <rect x="-4" y="-8" width="10" height="16" rx="5" fill="#0078D6"/>
+    <rect x="16" y="-28" width="10" height="56" rx="5" fill="#4ecca3"/>
+    <rect x="36" y="-14" width="10" height="28" rx="5" fill="#0078D6"/>
+    <rect x="-44" y="34" width="90" height="10" rx="5" fill="#4ecca3" opacity="0.85"/>
+  </g>
+  <text x="296" y="152" fill="#eaf4fb" font-family="Microsoft YaHei, Segoe UI, Helvetica, Arial, sans-serif" font-size="80" font-weight="800">实时中文字幕 · <tspan fill="#4ecca3">本地识别</tspan></text>
+  <text x="300" y="206" fill="#bfd4e4" font-family="Microsoft YaHei, Segoe UI, Helvetica, Arial, sans-serif" font-size="27">电脑一响就出字 · 不挑播放器 · 声音不出这台电脑</text>
+  <g font-family="Microsoft YaHei, Segoe UI, Helvetica, Arial, sans-serif" font-size="21" fill="#a9d8c6">
+    <rect x="304" y="234" width="236" height="44" rx="22" fill="#4ecca31a" stroke="#2c5c4c"/>
+    <text x="322" y="262">whisper.cpp 本机跑</text>
+    <rect x="560" y="234" width="222" height="44" rx="22" fill="#4ecca31a" stroke="#2c5c4c"/>
+    <text x="578" y="262">Windows 10 / 11 可用</text>
+    <rect x="802" y="234" width="236" height="44" rx="22" fill="#4ecca31a" stroke="#2c5c4c"/>
+    <text x="820" y="262">字幕条可拖 · 可穿透</text>
+  </g>
+</svg>
