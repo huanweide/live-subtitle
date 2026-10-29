@@ -337,7 +337,7 @@ MIT — 详见 [LICENSE](LICENSE)。
 
 如果这个工具帮你省下了看字幕的时间，**给个 Star 就是最大的支持**。
 
-**作者**：ReTri · 樊斯瑞（[github.com/huanweide](https://github.com/huanweide)）· MIT
+**作者**：ReTri · huanweide（[github.com/huanweide](https://github.com/huanweide)）· MIT
 
 **同一作者的其他工具**：
 
