@@ -15,7 +15,6 @@
 [![CI](https://github.com/huanweide/live-subtitle/actions/workflows/ci.yml/badge.svg)](https://github.com/huanweide/live-subtitle/actions/workflows/ci.yml)
 [![许可](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-**EN:** [README_EN.md](README_EN.md) · Live Chinese subtitles for whatever your PC is playing — local Whisper recognition, cloud translation you control.
 
 **自动流程**：`系统声音 → whisper-stream 本机识别 → 四道文字处理 →（可选）翻译 → 置顶字幕条`
 
