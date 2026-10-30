@@ -18,13 +18,13 @@
 
 **自动流程**：`系统声音 → whisper-stream 本机识别 → 四道文字处理 →（可选）翻译 → 置顶字幕条`
 
-[30 秒看懂](#-30-秒看懂) · [它能做什么](#它能做什么) · [特性](#特性-features) · [快速开始](#快速开始-quick-start) · [架构](#架构-architecture) · [和别家比](#和别家比) · [路线图](#路线图-roadmap)
+[30 秒看懂](#30-秒看懂) · [它能做什么](#它能做什么) · [特性](#特性-features) · [快速开始](#快速开始-quick-start) · [架构](#架构-architecture) · [和别家比](#和别家比) · [路线图](#路线图-roadmap)
 
 ![字幕条实拍](docs/screenshot-bar.png)
 
 ---
 
-## 🎯 30 秒看懂
+## 30 秒看懂
 
 ```text
 之前 · 想看一集没有中字的日语片
@@ -336,7 +336,7 @@ MIT — 详见 [LICENSE](LICENSE)。
 
 如果这个工具帮你省下了看字幕的时间，**给个 Star 就是最大的支持**。
 
-**作者**：ReTri · huanweide（[github.com/huanweide](https://github.com/huanweide)）· MIT
+**作者**：huanweide（[github.com/huanweide](https://github.com/huanweide)）· MIT
 
 **同一作者的其他工具**：
 
