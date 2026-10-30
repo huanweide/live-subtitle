@@ -332,7 +332,7 @@ MIT — 详见 [LICENSE](LICENSE)。
 
 ---
 
-## ⭐ Star
+## Star
 
 如果这个工具帮你省下了看字幕的时间，**给个 Star 就是最大的支持**。
 
