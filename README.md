@@ -2,6 +2,8 @@
   <img src="assets/banner.svg" alt="live-subtitle — 实时中文字幕 · 本地识别">
 </p>
 
+**English** · [README_EN.md](./README_EN.md)
+
 # 🔴 实时中文字幕 · 本地识别（Windows）
 
 > **电脑在响，屏幕底部就实时浮出中文字幕**——原文在上，中文在下。
